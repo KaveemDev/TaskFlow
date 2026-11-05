@@ -49,13 +49,13 @@ class _PremiumButtonState extends State<PremiumButton> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    
+
     final bool isDisabled = widget.onPressed == null || widget.isLoading;
 
     final Color backgroundColor = widget.isPrimary
         ? colorScheme.primary.withValues(alpha: isDisabled ? 0.5 : 1.0)
         : colorScheme.surface;
-    
+
     final Color foregroundColor = widget.isPrimary
         ? colorScheme.onPrimary.withValues(alpha: isDisabled ? 0.5 : 1.0)
         : colorScheme.onSurface.withValues(alpha: isDisabled ? 0.5 : 1.0);
@@ -63,7 +63,9 @@ class _PremiumButtonState extends State<PremiumButton> {
     final BorderSide? border = widget.isPrimary
         ? null
         : BorderSide(
-            color: colorScheme.outline.withValues(alpha: isDisabled ? 0.2 : 1.0),
+            color: colorScheme.outline.withValues(
+              alpha: isDisabled ? 0.2 : 1.0,
+            ),
             width: 1,
           );
 
@@ -88,7 +90,7 @@ class _PremiumButtonState extends State<PremiumButton> {
                       color: colorScheme.primary.withValues(alpha: 0.3),
                       blurRadius: 12,
                       offset: const Offset(0, 4),
-                    )
+                    ),
                   ]
                 : [],
           ),
@@ -99,7 +101,9 @@ class _PremiumButtonState extends State<PremiumButton> {
                     width: 20,
                     child: CircularProgressIndicator(
                       strokeWidth: 2.5,
-                      valueColor: AlwaysStoppedAnimation<Color>(foregroundColor),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        foregroundColor,
+                      ),
                     ),
                   ).animate().fadeIn()
                 : Row(

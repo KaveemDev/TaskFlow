@@ -17,7 +17,10 @@ class AnalyticsScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: AppBar(
-        title: Text('Widgets & Analytics', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(
+          'Widgets & Analytics',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         elevation: 0,
       ),
       body: tasksAsync.when(
@@ -25,13 +28,19 @@ class AnalyticsScreen extends ConsumerWidget {
           return sessionsAsync.when(
             data: (sessions) {
               final categoryDistribution = _getCategoryDistribution(tasks);
-              
+
               return SingleChildScrollView(
                 padding: EdgeInsets.all(16.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Task Distribution', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Text(
+                      'Task Distribution',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     SizedBox(height: 16),
                     if (categoryDistribution.isEmpty)
                       Text('No completed tasks yet.')
@@ -40,25 +49,41 @@ class AnalyticsScreen extends ConsumerWidget {
                         height: 250,
                         child: Card(
                           elevation: 4,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
                           child: Padding(
                             padding: EdgeInsets.all(16.0),
                             child: PieChart(
                               PieChartData(
                                 sectionsSpace: 2,
                                 centerSpaceRadius: 40,
-                                sections: _buildPieChartSections(categoryDistribution),
+                                sections: _buildPieChartSections(
+                                  categoryDistribution,
+                                ),
                               ),
                             ),
                           ),
                         ),
                       ),
                     SizedBox(height: 32),
-                    Text('Focus Streak', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Text(
+                      'Focus Streak',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     SizedBox(height: 16),
                     _buildStreakWidget(sessions),
                     SizedBox(height: 32),
-                    Text('Productivity Overview', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Text(
+                      'Productivity Overview',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     SizedBox(height: 16),
                     AspectRatio(
                       aspectRatio: 2.0, // 4x2 format
@@ -99,7 +124,11 @@ class AnalyticsScreen extends ConsumerWidget {
         value: e.value.toDouble(),
         title: '${e.key}\n${e.value}',
         radius: 60,
-        titleStyle: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+        titleStyle: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
       );
     }).toList();
   }
@@ -120,10 +149,17 @@ class AnalyticsScreen extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Current Streak', style: TextStyle(color: Colors.grey)),
-                Text('$streak Days', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                Text(
+                  '$streak Days',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
               ],
             ),
-            Icon(Icons.local_fire_department, color: Colors.orange.shade400, size: 48),
+            Icon(
+              Icons.local_fire_department,
+              color: Colors.orange.shade400,
+              size: 48,
+            ),
           ],
         ),
       ),

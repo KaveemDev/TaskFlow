@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import '../providers/providers.dart';
 import '../models/task_model.dart';
 import '../models/focus_session_model.dart';
-import '../widgets/premium/premium_card.dart';
+import '../services/insights_math.dart';
+import '../widgets/segmented_control.dart';
+import '../widgets/ui.dart';
+import '../theme/app_theme.dart';
 
 class InsightsScreen extends ConsumerStatefulWidget {
   const InsightsScreen({super.key});
@@ -17,1036 +18,982 @@ class InsightsScreen extends ConsumerStatefulWidget {
   ConsumerState<InsightsScreen> createState() => _InsightsScreenState();
 }
 
+/// One bar in the period chart.
+class _Bar {
+  _Bar(this.label, this.minutes, {this.current = false, this.future = false});
+  final String label;
+  final int minutes;
+  final bool current;
+  final bool future;
+}
+
 class _InsightsScreenState extends ConsumerState<InsightsScreen> {
-  String _detailsTab = 'Day';
-  String _trendsTab = 'Week';
-  
-  DateTime _timelineDate = DateTime.now();
-  DateTime _mostFocusedDate = DateTime.now();
-  DateTime _yearGridDate = DateTime.now();
+  InsightPeriod _period = InsightPeriod.week;
+  int _offset = 0; // 0 = this week/month/year, -1 = the one before, ...
+  bool _byCategory = false;
+
+  String get _unit => switch (_period) {
+    InsightPeriod.week => 'week',
+    InsightPeriod.month => 'month',
+    InsightPeriod.year => 'year',
+  };
+
+  String _rangeLabel(DateTime start, DateTime end) {
+    if (_period == InsightPeriod.year) return '${start.year}';
+    if (_period == InsightPeriod.month)
+      return DateFormat('MMMM y').format(start);
+    final last = addDays(end, -1);
+    return start.month == last.month
+        ? '${start.day} – ${DateFormat('d MMMM').format(last)}'
+        : '${DateFormat('d MMM').format(start)} – ${DateFormat('d MMM').format(last)}';
+  }
 
   @override
   Widget build(BuildContext context) {
-    final tasksAsync = ref.watch(tasksStreamProvider);
-    final sessionsAsync = ref.watch(focusSessionsStreamProvider);
     final theme = Theme.of(context);
+    final tasks = ref.watch(tasksStreamProvider).value ?? const <Task>[];
+    final sessions =
+        ref.watch(focusSessionsStreamProvider).value ?? const <FocusSession>[];
+    final now = DateTime.now();
+    final today = DateUtils.dateOnly(now);
+
+    final (start, end) = periodBounds(_period, now, _offset);
+    final (prevStart, prevEnd) = periodBounds(_period, now, _offset - 1);
+    final inPeriod = sessionsIn(sessions, start, end);
+    final inPrev = sessionsIn(sessions, prevStart, prevEnd);
+    final total = totalMinutes(inPeriod);
+    bool doneIn(Task t, DateTime a, DateTime b) =>
+        t.isCompleted &&
+        t.dueDate != null &&
+        !t.dueDate!.isBefore(a) &&
+        t.dueDate!.isBefore(b);
+    final tasksDone = tasks.where((t) => doneIn(t, start, end)).length;
+    final tasksDonePrev = tasks
+        .where((t) => doneIn(t, prevStart, prevEnd))
+        .length;
+    final (streak, bestStreak) = streaks(sessions, now);
+
+    final bars = _bars(sessions, start, end, today);
+    final elapsed = bars.where((b) => !b.future).length;
+    final average = elapsed == 0 ? 0 : total ~/ elapsed;
 
     return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
-      appBar: AppBar(
-        centerTitle: false,
-        title: Text('Insights', style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700)),
-        actions: [
-          IconButton(
-            icon: Icon(LucideIcons.flame, color: theme.colorScheme.error),
-            tooltip: 'Log Focus Record',
-            onPressed: () {
-              HapticFeedback.lightImpact();
-              _showAddFocusRecordModal(context, DateTime.now());
-            },
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: tasksAsync.when(
-        data: (tasks) {
-          return sessionsAsync.when(
-            data: (sessions) {
-              return SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildTopKPIs(sessions, context).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1, end: 0, curve: Curves.easeOutQuart),
-                    const SizedBox(height: 16),
-                    _buildFocusRecord(sessions, tasks, context, ref).animate().fadeIn(delay: 100.ms, duration: 400.ms).slideY(begin: 0.1, end: 0, curve: Curves.easeOutQuart),
-                    const SizedBox(height: 16),
-                    _buildDetailsSection(sessions, tasks, context).animate().fadeIn(delay: 200.ms, duration: 400.ms).slideY(begin: 0.1, end: 0, curve: Curves.easeOutQuart),
-                    const SizedBox(height: 16),
-                    _buildTrendsSection(sessions, context).animate().fadeIn(delay: 300.ms, duration: 400.ms).slideY(begin: 0.1, end: 0, curve: Curves.easeOutQuart),
-                    const SizedBox(height: 16),
-                    _buildTimelineSection(sessions, context).animate().fadeIn(delay: 400.ms, duration: 400.ms).slideY(begin: 0.1, end: 0, curve: Curves.easeOutQuart),
-                    const SizedBox(height: 16),
-                    _buildMostFocusedTimeSection(sessions, context).animate().fadeIn(delay: 500.ms, duration: 400.ms).slideY(begin: 0.1, end: 0, curve: Curves.easeOutQuart),
-                    const SizedBox(height: 16),
-                    _buildYearGridsSection(sessions, context).animate().fadeIn(delay: 600.ms, duration: 400.ms).slideY(begin: 0.1, end: 0, curve: Curves.easeOutQuart),
-                  ],
-                ),
-              );
-            },
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, st) => Center(child: Text('Error: $e', style: TextStyle(color: theme.colorScheme.error))),
-          );
-        },
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, st) => Center(child: Text('Error: $e', style: TextStyle(color: theme.colorScheme.error))),
-      ),
-    );
-  }
-
-  Widget _buildTopKPIs(List<FocusSession> sessions, BuildContext context) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final yesterday = today.subtract(const Duration(days: 1));
-
-    int todayPomos = 0;
-    int yesterdayPomos = 0;
-    int todayFocusMinutes = 0;
-    int yesterdayFocusMinutes = 0;
-    int totalPomos = sessions.length;
-    int totalFocusMinutes = 0;
-
-    for (var s in sessions) {
-      totalFocusMinutes += s.durationMinutes;
-      final sessionDate = DateTime(s.timestamp.year, s.timestamp.month, s.timestamp.day);
-      if (sessionDate.isAtSameMomentAs(today)) {
-        todayPomos++;
-        todayFocusMinutes += s.durationMinutes;
-      } else if (sessionDate.isAtSameMomentAs(yesterday)) {
-        yesterdayPomos++;
-        yesterdayFocusMinutes += s.durationMinutes;
-      }
-    }
-
-    final pomoDiff = todayPomos - yesterdayPomos;
-    final focusDiffMinutes = todayFocusMinutes - yesterdayFocusMinutes;
-    final focusDiffH = focusDiffMinutes.abs() ~/ 60;
-    final focusDiffM = focusDiffMinutes.abs() % 60;
-
-    return Column(
-      children: [
-        Row(
+      body: SafeArea(
+        bottom: false,
+        child: ListView(
+          padding: const EdgeInsets.only(bottom: 32),
           children: [
-            Expanded(
-              child: _buildKPICard(
-                title: "Today's Pomo",
-                value: todayPomos.toString(),
-                trendText: "${pomoDiff.abs()} from yesterday",
-                isUp: pomoDiff >= 0,
-                context: context,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildKPICard(
-                title: "Today's Focus",
-                value: "${todayFocusMinutes ~/ 60}h ${todayFocusMinutes % 60}m",
-                trendText: "${focusDiffH}h${focusDiffM}m from yesterday",
-                isUp: focusDiffMinutes >= 0,
-                context: context,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: _buildKPICard(
-                title: "Total Pomos",
-                value: totalPomos.toString(),
-                trendText: "",
-                context: context,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildKPICard(
-                title: "Total Duration",
-                value: "${totalFocusMinutes ~/ 60}h ${totalFocusMinutes % 60}m",
-                trendText: "",
-                context: context,
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildKPICard({required String title, required String value, required String trendText, bool? isUp, required BuildContext context}) {
-    final theme = Theme.of(context);
-    return PremiumCard(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.5,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 16),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(
-              value,
-              style: theme.textTheme.headlineLarge?.copyWith(
-                color: theme.colorScheme.primary,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -1,
-              ),
-            ),
-          ),
-          if (trendText.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Icon(isUp == true ? LucideIcons.trendingUp : LucideIcons.trendingDown, color: isUp == true ? Colors.green : theme.colorScheme.error, size: 14),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    trendText, 
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: isUp == true ? Colors.green : theme.colorScheme.error,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                  ),
+            ScreenHeader(
+              subtitle:
+                  'All time · ${sessions.length} sessions · ${formatMinutes(totalMinutes(sessions))}',
+              title: 'Insights',
+              actions: [
+                SquareIconButton(
+                  icon: LucideIcons.plus,
+                  tooltip: 'Log a focus session',
+                  onPressed: () =>
+                      _showAddFocusRecordModal(context, DateTime.now()),
                 ),
               ],
             ),
-          ] else const SizedBox(height: 26),
-        ],
+            const SizedBox(height: 16),
+            Padding(
+              padding: kScreenPadding,
+              child: SegmentedControl<InsightPeriod>(
+                value: _period,
+                options: const {
+                  InsightPeriod.week: 'Week',
+                  InsightPeriod.month: 'Month',
+                  InsightPeriod.year: 'Year',
+                },
+                onChanged: (p) => setState(() {
+                  _period = p;
+                  _offset = 0;
+                }),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  IconButton(
+                    tooltip: 'Previous $_unit',
+                    icon: const Icon(LucideIcons.chevronLeft, size: 20),
+                    onPressed: () => setState(() => _offset--),
+                  ),
+                  Expanded(
+                    child: Text(
+                      _offset == 0
+                          ? 'This $_unit · ${_rangeLabel(start, end)}'
+                          : _rangeLabel(start, end),
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.labelMedium,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Next $_unit',
+                    icon: const Icon(LucideIcons.chevronRight, size: 20),
+                    onPressed: _offset >= 0
+                        ? null
+                        : () => setState(() => _offset++),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            Padding(
+              padding: kScreenPadding,
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _stat(
+                          theme,
+                          'Focus',
+                          formatMinutes(total),
+                          _trend(total - totalMinutes(inPrev), formatMinutes),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _stat(
+                          theme,
+                          'Sessions',
+                          '${inPeriod.length}',
+                          _trend(inPeriod.length - inPrev.length, (n) => '$n'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _stat(
+                          theme,
+                          'Tasks done',
+                          '$tasksDone',
+                          _trend(tasksDone - tasksDonePrev, (n) => '$n'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _stat(
+                          theme,
+                          'Streak',
+                          '$streak ${streak == 1 ? 'day' : 'days'}',
+                          ('Best $bestStreak', null),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _section(_chart(theme, bars, average)),
+            _section(_breakdown(theme, inPeriod, tasks, total)),
+            if (_period == InsightPeriod.week)
+              _section(_weekTimeline(theme, inPeriod, start)),
+            _section(_hours(theme, inPeriod)),
+            _section(_yearGrid(theme, sessions, start.year)),
+            _section(_records(theme, inPeriod, tasks)),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildFocusRecord(List<FocusSession> sessions, List<Task> tasks, BuildContext context, WidgetRef ref) {
+  /// ("↑ 40m vs last week", colour) — colour null means neutral.
+  (String, Color?) _trend(int diff, String Function(int) fmt) {
     final theme = Theme.of(context);
-    final sortedSessions = List<FocusSession>.from(sessions)..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    final recentSessions = sortedSessions.take(3).toList(); 
+    if (diff == 0) return ('Same as last $_unit', null);
+    return (
+      '${diff > 0 ? '↑' : '↓'} ${fmt(diff.abs())} vs last $_unit',
+      diff > 0 ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+    );
+  }
 
-    return PremiumCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Focus Record', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-            ],
+  List<_Bar> _bars(
+    List<FocusSession> sessions,
+    DateTime start,
+    DateTime end,
+    DateTime today,
+  ) {
+    int minutes(DateTime a, DateTime b) =>
+        totalMinutes(sessionsIn(sessions, a, b));
+    switch (_period) {
+      case InsightPeriod.week:
+        return [
+          for (var i = 0; i < 7; i++)
+            () {
+              final d = addDays(start, i);
+              return _Bar(
+                DateFormat('E').format(d).substring(0, 1),
+                minutes(d, addDays(d, 1)),
+                current: d == today,
+                future: d.isAfter(today),
+              );
+            }(),
+        ];
+      case InsightPeriod.month:
+        final out = <_Bar>[];
+        var i = 1;
+        for (var w = start; w.isBefore(end); w = addDays(w, 7), i++) {
+          final we = addDays(w, 7).isAfter(end) ? end : addDays(w, 7);
+          out.add(
+            _Bar(
+              'W$i',
+              minutes(w, we),
+              current: !today.isBefore(w) && today.isBefore(we),
+              future: w.isAfter(today),
+            ),
+          );
+        }
+        return out;
+      case InsightPeriod.year:
+        return [
+          for (var m = 1; m <= 12; m++)
+            _Bar(
+              DateFormat('MMMMM').format(DateTime(start.year, m)),
+              minutes(DateTime(start.year, m), DateTime(start.year, m + 1)),
+              current: start.year == today.year && m == today.month,
+              future: DateTime(start.year, m).isAfter(today),
+            ),
+        ];
+    }
+  }
+
+  Widget _section(Widget child) =>
+      Padding(padding: const EdgeInsets.fromLTRB(20, 0, 20, 16), child: child);
+
+  Widget _card(
+    ThemeData theme,
+    Widget child, {
+    EdgeInsets padding = const EdgeInsets.all(16),
+  }) => Container(
+    padding: padding,
+    decoration: BoxDecoration(
+      color: theme.colorScheme.surface,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: theme.colorScheme.outline),
+    ),
+    child: child,
+  );
+
+  Widget _cardTitle(ThemeData theme, String title, {String? trailing}) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            if (trailing != null)
+              Text(
+                trailing,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontSize: 12,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+          ],
+        ),
+      );
+
+  Widget _stat(
+    ThemeData theme,
+    String label,
+    String value,
+    (String, Color?) note,
+  ) => _card(
+    theme,
+    padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: theme.textTheme.labelSmall?.copyWith(
+            fontSize: 12,
+            color: theme.colorScheme.onSurfaceVariant,
           ),
-          const SizedBox(height: 20),
-          if (recentSessions.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8.0),
-              child: Text('No focus records yet.', style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-            )
-          else
-            ...recentSessions.asMap().entries.map((entry) {
-              final idx = entry.key;
-              final session = entry.value;
-              final task = tasks.firstWhere((t) => t.id == session.linkedTaskId, orElse: () => Task(id: '', title: 'General Task'));
-              final isFirst = idx == 0;
-              
-              final timeFormat = DateFormat('hh:mm a');
-              final startTimeStr = timeFormat.format(session.timestamp);
-              final endTimeStr = timeFormat.format(session.timestamp.add(Duration(minutes: session.durationMinutes)));
-              
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 16.0),
-                child: Dismissible(
-                  key: Key(session.id),
-                  direction: DismissDirection.endToStart,
-                  background: Container(
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.only(right: 20.0),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.error,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Icon(LucideIcons.trash2, color: theme.colorScheme.onError),
-                  ),
-                  onDismissed: (direction) {
-                    ref.read(focusSessionRepositoryProvider).deleteFocusSession(session.id);
-                    HapticFeedback.mediumImpact();
-                  },
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        margin: const EdgeInsets.only(top: 4, right: 16),
-                        width: 12,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: isFirst ? theme.colorScheme.primary : Colors.transparent,
-                          border: Border.all(color: isFirst ? theme.colorScheme.primary : theme.colorScheme.outline, width: 2),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          value,
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontSize: 22,
+            fontWeight: FontWeight.w700,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          note.$1,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.labelSmall?.copyWith(
+            fontSize: 12,
+            color: note.$2 ?? theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _chart(ThemeData theme, List<_Bar> bars, int average) {
+    const chartHeight = 104.0;
+    final maxMinutes = bars.fold<int>(
+      0,
+      (m, b) => b.minutes > m ? b.minutes : m,
+    );
+    final soft = theme.colorScheme.primary.withValues(alpha: 0.22);
+    final heading = switch (_period) {
+      InsightPeriod.week => 'Focus per day',
+      InsightPeriod.month => 'Focus per week',
+      InsightPeriod.year => 'Focus per month',
+    };
+
+    return _card(
+      theme,
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _cardTitle(theme, heading, trailing: 'Avg ${formatMinutes(average)}'),
+          Semantics(
+            label: bars
+                .where((b) => !b.future)
+                .map((b) => '${b.label} ${formatMinutes(b.minutes)}')
+                .join(', '),
+            excludeSemantics: true,
+            child: SizedBox(
+              height: chartHeight + 36,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  for (final b in bars)
+                    Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: bars.length > 7 ? 3 : 5,
                         ),
-                      ),
-                      Expanded(
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.end,
                           children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(task.title, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
-                                Text('${session.durationMinutes ~/ 60 > 0 ? "${session.durationMinutes ~/ 60}h " : ""}${session.durationMinutes % 60 > 0 ? "${session.durationMinutes % 60}m" : ""}'.trim(), 
-                                  style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.primary, fontWeight: FontWeight.w600)),
-                              ],
+                            if (b.minutes > 0 && bars.length <= 7)
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  formatMinutes(b.minutes),
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: b.current
+                                        ? theme.colorScheme.primary
+                                        : theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+                            const SizedBox(height: 6),
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 250),
+                              curve: Curves.easeOut,
+                              height: b.minutes == 0 || maxMinutes == 0
+                                  ? 4
+                                  : (b.minutes / maxMinutes * chartHeight)
+                                        .clamp(4.0, chartHeight),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(6),
+                                color: b.current
+                                    ? theme.colorScheme.primary
+                                    : b.minutes > 0
+                                    ? soft
+                                    : theme.colorScheme.outline,
+                              ),
                             ),
-                            const SizedBox(height: 4),
+                            const SizedBox(height: 8),
                             Text(
-                              '${DateFormat('d MMM').format(session.timestamp)} • $startTimeStr - $endTimeStr', 
-                              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                              b.label,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: b.current
+                                    ? theme.colorScheme.onSurface
+                                    : theme.colorScheme.onSurfaceVariant,
+                                fontWeight: b.current
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                              ),
                             ),
                           ],
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              );
-            }),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDetailsSection(List<FocusSession> sessions, List<Task> tasks, BuildContext context) {
-    final theme = Theme.of(context);
-    final now = DateTime.now();
-    final startOfDay = DateTime(now.year, now.month, now.day);
-    final startOfWeek = startOfDay.subtract(Duration(days: now.weekday - 1));
-    final startOfMonth = DateTime(now.year, now.month, 1);
-    
-    DateTime filterStart;
-    if (_detailsTab == 'Day') {
-      filterStart = startOfDay;
-    } else if (_detailsTab == 'Week') {
-      filterStart = startOfWeek;
-    } else {
-      filterStart = startOfMonth;
-    }
-    
-    final filteredSessions = sessions.where((s) => s.timestamp.isAfter(filterStart) || s.timestamp.isAtSameMomentAs(filterStart)).toList();
-    
-    Map<String, int> categoryDuration = {};
-    Map<String, int> taskDuration = {};
-    for (var s in filteredSessions) {
-      final task = tasks.firstWhere((t) => t.id == s.linkedTaskId, orElse: () => Task(id: '', title: 'General Task', category: 'General'));
-      categoryDuration[task.category] = (categoryDuration[task.category] ?? 0) + s.durationMinutes;
-      taskDuration[task.title] = (taskDuration[task.title] ?? 0) + s.durationMinutes;
-    }
-
-    final totalDuration = categoryDuration.values.fold(0, (a, b) => a + b);
-    List<PieChartSectionData> pieSections = [];
-    final colors = [theme.colorScheme.primary, theme.colorScheme.secondary, theme.colorScheme.tertiary, theme.colorScheme.error, Colors.orange];
-    int colorIdx = 0;
-    
-    if (totalDuration > 0) {
-      categoryDuration.forEach((cat, duration) {
-        pieSections.add(PieChartSectionData(
-          value: duration.toDouble(),
-          color: colors[colorIdx % colors.length],
-          title: '${((duration / totalDuration) * 100).toStringAsFixed(0)}%',
-          radius: 20,
-          titleStyle: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onPrimary, fontWeight: FontWeight.bold),
-        ));
-        colorIdx++;
-      });
-    } else {
-      pieSections.add(PieChartSectionData(
-        value: 100,
-        color: theme.colorScheme.surfaceContainerHighest,
-        radius: 16,
-        showTitle: false,
-      ));
-    }
-
-    final sortedTasks = taskDuration.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
-
-    return PremiumCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Details', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-            ],
-          ),
-          const SizedBox(height: 20),
-          _buildSegmentedControl(['Day', 'Week', 'Month'], _detailsTab, (v) {
-            HapticFeedback.selectionClick();
-            setState(() => _detailsTab = v);
-          }, context),
-          const SizedBox(height: 32),
-          Center(
-            child: SizedBox(
-              height: 180,
-              width: 180,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  PieChart(
-                    PieChartData(
-                      sectionsSpace: 2,
-                      centerSpaceRadius: 65,
-                      sections: pieSections,
-                    ),
-                  ),
-                  if (totalDuration == 0)
-                    Text('No Data', style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant))
-                  else
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text('${totalDuration ~/ 60}h ${totalDuration % 60}m', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-                        Text('Total', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                      ],
                     ),
                 ],
               ),
             ),
           ),
-          if (totalDuration > 0) ...[
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: categoryDuration.entries.toList().asMap().entries.map((entry) {
-                final idx = entry.key;
-                final cat = entry.value.key;
-                return Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(width: 10, height: 10, decoration: BoxDecoration(color: colors[idx % colors.length], shape: BoxShape.circle)),
-                    const SizedBox(width: 4),
-                    Text(cat, style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                  ],
-                );
-              }).toList(),
-            ),
-          ],
-          const SizedBox(height: 32),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Focus Ranking', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
-              Row(
-                children: [
-                  Text('List', style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                  const SizedBox(width: 4),
-                  Icon(LucideIcons.chevronDown, color: theme.colorScheme.onSurfaceVariant, size: 16),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          if (sortedTasks.isEmpty)
-            Text('None', style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant))
-          else
-            ...sortedTasks.take(5).map((entry) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(child: Text(entry.key, style: theme.textTheme.bodyMedium, overflow: TextOverflow.ellipsis)),
-                    Text('${entry.value ~/ 60}h ${entry.value % 60}m', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
-                  ],
-                ),
-              );
-            }),
         ],
       ),
     );
   }
 
-  Widget _buildTrendsSection(List<FocusSession> sessions, BuildContext context) {
-    final theme = Theme.of(context);
-    final now = DateTime.now();
-
-    List<String> labels = [];
-    List<double> values = [];
-    double average = 0;
-    String averageLabel = 'Daily Average';
-
-    if (_trendsTab == 'Week') {
-      final startOfWeek = DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - 1));
-      labels = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
-      values = List.filled(7, 0);
-      for (var s in sessions) {
-        if (s.timestamp.isAfter(startOfWeek.subtract(const Duration(seconds: 1))) && s.timestamp.isBefore(startOfWeek.add(const Duration(days: 7)))) {
-          values[s.timestamp.weekday - 1] += s.durationMinutes;
-        }
+  Widget _breakdown(
+    ThemeData theme,
+    List<FocusSession> sessions,
+    List<Task> tasks,
+    int total,
+  ) {
+    final byId = {for (final t in tasks) t.id: t};
+    final buckets = <String, int>{};
+    var noTask = 0;
+    for (final s in sessions) {
+      final task = byId[s.linkedTaskId];
+      if (s.linkedTaskId == null) {
+        noTask += s.durationMinutes;
+        continue;
       }
-      average = values.reduce((a, b) => a + b) / 7;
-    } else if (_trendsTab == 'Month') {
-      final startOfMonth = DateTime(now.year, now.month, 1);
-      labels = ['W1', 'W2', 'W3', 'W4'];
-      values = List.filled(4, 0);
-      for (var s in sessions) {
-        if (s.timestamp.year == now.year && s.timestamp.month == now.month) {
-          int weekIndex = (s.timestamp.day - 1) ~/ 7;
-          if (weekIndex > 3) weekIndex = 3;
-          values[weekIndex] += s.durationMinutes;
-        }
-      }
-      average = values.reduce((a, b) => a + b) / 4;
-      averageLabel = 'Weekly Average';
-    } else if (_trendsTab == 'Year') {
-      labels = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
-      values = List.filled(12, 0);
-      for (var s in sessions) {
-        if (s.timestamp.year == now.year) {
-          values[s.timestamp.month - 1] += s.durationMinutes;
-        }
-      }
-      average = values.reduce((a, b) => a + b) / 12;
-      averageLabel = 'Monthly Average';
+      final key = _byCategory
+          ? (task?.category ?? 'Other')
+          : (task?.title ?? 'Deleted task');
+      buckets[key] = (buckets[key] ?? 0) + s.durationMinutes;
     }
+    final sorted = buckets.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final rows = <(String, int, bool)>[
+      ...sorted.take(5).map((e) => (e.key, e.value, false)),
+      if (sorted.length > 5)
+        ('Other', sorted.skip(5).fold<int>(0, (s, e) => s + e.value), true),
+      if (noTask > 0) ('No task', noTask, true),
+    ];
 
-    double maxY = values.isEmpty ? 60 : values.reduce((a, b) => a > b ? a : b);
-    if (maxY == 0) maxY = 60;
-
-    return PremiumCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return _card(
+      theme,
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Trends', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-            ],
+          _cardTitle(theme, 'Where the time went'),
+          SegmentedControl<bool>(
+            value: _byCategory,
+            options: const {false: 'By task', true: 'By category'},
+            onChanged: (v) => setState(() => _byCategory = v),
           ),
-          const SizedBox(height: 20),
-          Center(
-            child: _buildSegmentedControl(['Week', 'Month', 'Year'], _trendsTab, (v) {
-              HapticFeedback.selectionClick();
-              setState(() => _trendsTab = v);
-            }, context, compact: true),
-          ),
-          const SizedBox(height: 32),
-          SizedBox(
-            height: 180,
-            child: BarChart(
-              BarChartData(
-                alignment: BarChartAlignment.spaceAround,
-                maxY: maxY * 1.2,
-                barTouchData: BarTouchData(enabled: false),
-                titlesData: FlTitlesData(
-                  show: true,
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      getTitlesWidget: (value, meta) {
-                        if (value >= 0 && value < labels.length) {
-                          return Text(labels[value.toInt()], style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant));
-                        }
-                        return const Text('');
-                      },
-                      reservedSize: 28,
-                    ),
-                  ),
-                  leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                ),
-                gridData: const FlGridData(show: false),
-                borderData: FlBorderData(show: false),
-                barGroups: List.generate(labels.length, (index) {
-                  return BarChartGroupData(
-                    x: index,
-                    barRods: [
-                      BarChartRodData(
-                        toY: values[index],
-                        color: theme.colorScheme.primary,
-                        width: 16,
-                        borderRadius: BorderRadius.circular(4),
-                        backDrawRodData: BackgroundBarChartRodData(
-                          show: true,
-                          toY: maxY * 1.2,
-                          color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-                        ),
-                      ),
-                    ],
-                  );
-                }),
+          const SizedBox(height: 16),
+          if (rows.isEmpty)
+            Text(
+              'No focus sessions in this $_unit.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
-          ),
-          const SizedBox(height: 16),
-          Divider(color: theme.colorScheme.outline.withValues(alpha: 0.2)),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(averageLabel, style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-              Text('${average ~/ 60}h ${(average % 60).toInt()}m', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTimelineSection(List<FocusSession> sessions, BuildContext context) {
-    final theme = Theme.of(context);
-    DateTime startOfWeek = _timelineDate.subtract(Duration(days: _timelineDate.weekday - 1));
-    startOfWeek = DateTime(startOfWeek.year, startOfWeek.month, startOfWeek.day);
-    DateTime endOfWeek = startOfWeek.add(const Duration(days: 7));
-
-    final weekSessions = sessions.where((s) => s.timestamp.isAfter(startOfWeek) && s.timestamp.isBefore(endOfWeek)).toList();
-
-    return _buildChartSection(
-      title: 'Timeline',
-      dateLabel: 'This Week',
-      onPrev: () {
-        HapticFeedback.lightImpact();
-        setState(() => _timelineDate = _timelineDate.subtract(const Duration(days: 7)));
-      },
-      onNext: () {
-        HapticFeedback.lightImpact();
-        setState(() => _timelineDate = _timelineDate.add(const Duration(days: 7)));
-      },
-      context: context,
-      child: Column(
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Column(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: ['00:00', '06:00', '12:00', '18:00', '24:00'].map((t) => 
-                  Text(t, style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant))
-                ).toList(),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Container(
-                  height: 160,
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final width = constraints.maxWidth;
-                      final height = constraints.maxHeight;
-                      final dayWidth = width / 7.0;
-
-                      return Stack(
-                        children: [
-                          // Draw horizontal grid lines (every 6 hours)
-                          ...List.generate(5, (i) {
-                            return Positioned(
-                              top: (i / 4) * height,
-                              left: 0,
-                              right: 0,
-                              child: Container(
-                                height: 1,
-                                color: theme.colorScheme.outline.withValues(alpha: 0.1),
-                              ),
-                            );
-                          }),
-                          // Draw vertical grid lines (every day)
-                          ...List.generate(8, (i) {
-                            return Positioned(
-                              top: 0,
-                              bottom: 0,
-                              left: i * dayWidth,
-                              child: Container(
-                                width: 1,
-                                color: theme.colorScheme.outline.withValues(alpha: 0.1),
-                              ),
-                            );
-                          }),
-                          ...weekSessions.map((session) {
-                            int dayIndex = session.timestamp.weekday - 1;
-                            int minutesSinceMidnight = session.timestamp.hour * 60 + session.timestamp.minute;
-                            
-                            double leftPos = dayIndex * dayWidth + (dayWidth * 0.05);
-                            double blockWidth = dayWidth * 0.9;
-                            
-                            double topPos = (minutesSinceMidnight / 1440.0) * height;
-                            double blockHeight = (session.durationMinutes / 1440.0) * height;
-                            if (blockHeight < 4) blockHeight = 4;
-                            if (topPos + blockHeight > height) blockHeight = height - topPos;
-
-                            return Positioned(
-                              left: leftPos,
-                              top: topPos,
-                              width: blockWidth,
-                              height: blockHeight,
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.primaryContainer.withValues(alpha: 0.9),
-                                  border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.5), width: 1),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                              ),
-                            );
-                          }),
-                        ],
-                      );
-                    }
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.only(left: 40.0), // Approximate width of time labels
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => 
+          for (final (name, minutes, quiet) in rows) ...[
+            Row(
+              children: [
                 Expanded(
-                  child: Center(
-                    child: Text(day, style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontSize: 14,
+                      color: quiet
+                          ? theme.colorScheme.onSurfaceVariant
+                          : theme.colorScheme.onSurface,
+                    ),
                   ),
-                )
-              ).toList(),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  '${formatMinutes(minutes)} · ${total == 0 ? 0 : (minutes * 100 / total).round()}%',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontSize: 14,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ),
-          ),
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: total == 0 ? 0 : minutes / total,
+                minHeight: 6,
+                backgroundColor: AppColors.of(context).raised,
+                color: quiet
+                    ? AppColors.of(context).ring
+                    : theme.colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 14),
+          ],
         ],
       ),
     );
   }
 
-  Widget _buildMostFocusedTimeSection(List<FocusSession> sessions, BuildContext context) {
-    final theme = Theme.of(context);
-    final monthSessions = sessions.where((s) => s.timestamp.year == _mostFocusedDate.year && s.timestamp.month == _mostFocusedDate.month).toList();
-
-    List<int> hourlyMinutes = List.filled(24, 0);
-    for (var s in monthSessions) {
-      hourlyMinutes[s.timestamp.hour] += s.durationMinutes;
+  /// Seven columns, one per day; each session is a block placed by time of day.
+  Widget _weekTimeline(
+    ThemeData theme,
+    List<FocusSession> sessions,
+    DateTime monday,
+  ) {
+    const height = 200.0;
+    var first = 8, last = 20; // hours shown; widened to fit the week's sessions
+    for (final s in sessions) {
+      final end = s.timestamp.add(Duration(minutes: s.durationMinutes));
+      if (s.timestamp.hour < first) first = s.timestamp.hour;
+      final endHour = end.day != s.timestamp.day
+          ? 24
+          : end.hour + (end.minute > 0 ? 1 : 0);
+      if (endHour > last) last = endHour;
     }
+    final span = (last - first) * 60;
+    double y(DateTime t) => ((t.hour - first) * 60 + t.minute) / span * height;
+    final labelHours = [first, (first + last) ~/ 2, last];
 
-    int maxMinutes = hourlyMinutes.reduce((curr, next) => curr > next ? curr : next);
-    if (maxMinutes == 0) maxMinutes = 60;
-
-    return _buildChartSection(
-      title: 'Most Focused Time',
-      dateLabel: DateFormat('MMM yyyy').format(_mostFocusedDate),
-      onPrev: () {
-        HapticFeedback.lightImpact();
-        setState(() => _mostFocusedDate = DateTime(_mostFocusedDate.year, _mostFocusedDate.month - 1, 1));
-      },
-      onNext: () {
-        HapticFeedback.lightImpact();
-        setState(() => _mostFocusedDate = DateTime(_mostFocusedDate.year, _mostFocusedDate.month + 1, 1));
-      },
-      context: context,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return _card(
+      theme,
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Column(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text('${maxMinutes ~/ 60}h${maxMinutes % 60}m', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-              Text('${(maxMinutes * 0.75) ~/ 60}h${((maxMinutes * 0.75).toInt()) % 60}m', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-              Text('${(maxMinutes * 0.5) ~/ 60}h${((maxMinutes * 0.5).toInt()) % 60}m', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-              Text('${(maxMinutes * 0.25) ~/ 60}h${((maxMinutes * 0.25).toInt()) % 60}m', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-              Text('0m', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-            ].map((e) => Padding(padding: const EdgeInsets.only(bottom: 18), child: e)).toList(),
+          _cardTitle(
+            theme,
+            'Week timeline',
+            trailing: '${sessions.length} sessions',
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
+          SizedBox(
+            height: height,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 SizedBox(
-                  height: 140,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: List.generate(24, (index) {
-                      double pct = hourlyMinutes[index] / maxMinutes;
-                      double height = 140 * pct;
-                      if (height < 2 && hourlyMinutes[index] > 0) height = 2;
-                      
-                      return AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        curve: Curves.easeOutQuart,
-                        width: 8,
-                        height: height,
-                        decoration: BoxDecoration(
-                          color: height > 0 ? theme.colorScheme.primary : theme.colorScheme.surfaceContainerHighest,
-                          borderRadius: const BorderRadius.only(topLeft: Radius.circular(4), topRight: Radius.circular(4)),
+                  width: 36,
+                  child: Stack(
+                    children: [
+                      for (final h in labelHours)
+                        Positioned(
+                          top: ((h - first) * 60 / span * height - 7).clamp(
+                            0.0,
+                            height - 14,
+                          ),
+                          child: Text(
+                            '${h.toString().padLeft(2, '0')}:00',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              fontSize: 10,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
                         ),
-                      );
-                    }),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: ['12A', '6A', '12P', '6P', '11P'].map((t) => 
-                    Text(t, style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant, fontSize: 10))
-                  ).toList(),
-                ),
+                for (var i = 0; i < 7; i++)
+                  Expanded(
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.of(context).raised,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Stack(
+                        children: [
+                          for (final s in sessions.where(
+                            (s) => DateUtils.isSameDay(
+                              s.timestamp,
+                              addDays(monday, i),
+                            ),
+                          ))
+                            Positioned(
+                              left: 2,
+                              right: 2,
+                              top: y(s.timestamp).clamp(0.0, height),
+                              height: (s.durationMinutes / span * height).clamp(
+                                3.0,
+                                height,
+                              ),
+                              child: Tooltip(
+                                message:
+                                    '${DateFormat.Hm().format(s.timestamp)} · ${formatMinutes(s.durationMinutes)}',
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.primary,
+                                    borderRadius: BorderRadius.circular(3),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
               ],
             ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const SizedBox(width: 36),
+              for (var i = 0; i < 7; i++)
+                Expanded(
+                  child: Text(
+                    DateFormat('E').format(addDays(monday, i)).substring(0, 1),
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildYearGridsSection(List<FocusSession> sessions, BuildContext context) {
-    final theme = Theme.of(context);
-    int year = _yearGridDate.year;
-    
-    Map<int, int> dayMinutes = {};
-    for (var s in sessions) {
-      if (s.timestamp.year == year) {
-        int dayOfYear = s.timestamp.difference(DateTime(year, 1, 1)).inDays;
-        dayMinutes[dayOfYear] = (dayMinutes[dayOfYear] ?? 0) + s.durationMinutes;
-      }
-    }
-
-    bool isLeap = (year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0));
-    int totalDays = isLeap ? 366 : 365;
-    int firstDayOffset = DateTime(year, 1, 1).weekday - 1; // 0 = Monday, 6 = Sunday
-    int totalCells = totalDays + firstDayOffset;
-    int weeks = (totalCells / 7).ceil();
-
-    return _buildChartSection(
-      title: 'Year Grids',
-      dateLabel: year.toString(),
-      onPrev: () {
-        HapticFeedback.lightImpact();
-        setState(() => _yearGridDate = DateTime(year - 1, 1, 1));
-      },
-      onNext: () {
-        HapticFeedback.lightImpact();
-        setState(() => _yearGridDate = DateTime(year + 1, 1, 1));
-      },
-      context: context,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _hours(ThemeData theme, List<FocusSession> sessions) {
+    final hours = minutesByHour(sessions);
+    final max = hours.reduce((a, b) => a > b ? a : b);
+    final peak = max == 0 ? null : hours.indexOf(max);
+    const h = 72.0;
+    return _card(
+      theme,
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 28.0, right: 8.0),
-                  child: SizedBox(
-                    height: 7 * 16.0,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: List.generate(7, (i) {
-                        String text = '';
-                        if (i == 0) text = 'Mo';
-                        if (i == 2) text = 'We';
-                        if (i == 4) text = 'Fr';
-                        return SizedBox(
-                          height: 16,
-                          child: Text(text, style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant, fontSize: 10)),
-                        );
-                      }),
-                    ),
-                  ),
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      height: 20,
-                      width: weeks * 16.0,
-                      child: Stack(
-                        children: List.generate(12, (mIndex) {
-                          DateTime firstOfMonth = DateTime(year, mIndex + 1, 1);
-                          int dayOfYear = firstOfMonth.difference(DateTime(year, 1, 1)).inDays;
-                          int cellIndex = dayOfYear + firstDayOffset;
-                          int weekIndex = cellIndex ~/ 7;
-                          return Positioned(
-                            left: weekIndex * 16.0,
-                            child: Text(
-                              DateFormat('MMM').format(firstOfMonth),
-                              style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                            ),
-                          );
-                        }),
+          _cardTitle(
+            theme,
+            'Most focused time',
+            trailing: peak == null
+                ? null
+                : 'Peak ${peak.toString().padLeft(2, '0')}:00 – ${(peak + 1).toString().padLeft(2, '0')}:00',
+          ),
+          Semantics(
+            label: peak == null
+                ? 'No focus yet'
+                : 'Most focus between $peak and ${peak + 1} o\'clock',
+            excludeSemantics: true,
+            child: SizedBox(
+              height: h,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  for (var i = 0; i < 24; i++)
+                    Expanded(
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 1),
+                        height: max == 0 || hours[i] == 0
+                            ? 3
+                            : (hours[i] / max * h).clamp(3.0, h),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(2),
+                          color: i == peak
+                              ? theme.colorScheme.primary
+                              : hours[i] > 0
+                              ? theme.colorScheme.primary.withValues(alpha: 0.3)
+                              : theme.colorScheme.outline,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: List.generate(weeks, (weekIndex) {
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 4.0),
-                          child: Column(
-                            children: List.generate(7, (dayIndex) {
-                              int cellIndex = weekIndex * 7 + dayIndex;
-                              int dayOfYear = cellIndex - firstDayOffset;
-                              
-                              if (cellIndex < firstDayOffset || dayOfYear >= totalDays) {
-                                return const SizedBox(width: 12, height: 16); // Match height (12 + 4 bottom margin)
-                              }
-                              
-                              int minutes = dayMinutes[dayOfYear] ?? 0;
-                              Color color = theme.colorScheme.surfaceContainerHighest;
-                              if (minutes > 300) {
-                                 color = theme.colorScheme.primary;
-                              } else if (minutes >= 180) {
-                                 color = theme.colorScheme.primary.withValues(alpha: 0.8);
-                              } else if (minutes >= 60) {
-                                 color = theme.colorScheme.primary.withValues(alpha: 0.5);
-                              } else if (minutes > 0) {
-                                 color = theme.colorScheme.primary.withValues(alpha: 0.2);
-                              }
-                              
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 4.0),
-                                width: 12,
-                                height: 12,
-                                decoration: BoxDecoration(
-                                  color: color,
-                                  borderRadius: BorderRadius.circular(3),
-                                ),
-                              );
-                            }),
-                          ),
-                        );
-                      }),
-                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              for (final l in const ['00', '06', '12', '18', '24'])
+                Text(
+                  l,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    fontSize: 10,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// GitHub-style grid: one column per week, one cell per day, shade by focus minutes.
+  Widget _yearGrid(ThemeData theme, List<FocusSession> sessions, int year) {
+    final byDay = minutesByDayOfYear(sessions, year);
+    final jan1 = DateTime(year);
+    final dayCount = DateTime.utc(
+      year + 1,
+    ).difference(DateTime.utc(year)).inDays; // UTC: no DST hours
+    final lead = jan1.weekday - 1;
+    final weeks = ((lead + dayCount) / 7).ceil();
+    final yearTotal = byDay.values.fold<int>(0, (a, b) => a + b);
+    final primary = theme.colorScheme.primary;
+    Color shade(int m) => m == 0
+        ? AppColors.of(context).raised
+        : m < 60
+        ? primary.withValues(alpha: 0.25)
+        : m < 120
+        ? primary.withValues(alpha: 0.5)
+        : m < 240
+        ? primary.withValues(alpha: 0.75)
+        : primary;
+    const cell = 11.0, gap = 3.0;
+
+    return _card(
+      theme,
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _cardTitle(
+            theme,
+            'Year grid · $year',
+            trailing: '${byDay.length} days · ${formatMinutes(yearTotal)}',
+          ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            reverse: year == DateTime.now().year, // open on the recent weeks
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    for (var w = 0; w < weeks; w++)
+                      SizedBox(
+                        width: cell + gap,
+                        child: () {
+                          final firstDay = DateTime(year, 1, 1 + w * 7 - lead);
+                          final showMonth =
+                              firstDay.day <= 7 && firstDay.year == year;
+                          return Text(
+                            showMonth ? DateFormat('MMM').format(firstDay) : '',
+                            softWrap: false,
+                            overflow: TextOverflow.visible,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              fontSize: 9,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          );
+                        }(),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (var w = 0; w < weeks; w++)
+                      Padding(
+                        padding: const EdgeInsets.only(right: gap),
+                        child: Column(
+                          children: [
+                            for (var d = 0; d < 7; d++)
+                              () {
+                                final idx = w * 7 + d - lead;
+                                final inYear = idx >= 0 && idx < dayCount;
+                                return Container(
+                                  width: cell,
+                                  height: cell,
+                                  margin: const EdgeInsets.only(bottom: gap),
+                                  decoration: BoxDecoration(
+                                    color: inYear
+                                        ? shade(byDay[idx] ?? 0)
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(2.5),
+                                  ),
+                                );
+                              }(),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 24),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.start,
-              children: [
-                _buildLegendItem(theme.colorScheme.surfaceContainerHighest, '0m', context),
-                const SizedBox(width: 12),
-                _buildLegendItem(theme.colorScheme.primary.withValues(alpha: 0.2), '0-1h', context),
-                const SizedBox(width: 12),
-                _buildLegendItem(theme.colorScheme.primary.withValues(alpha: 0.5), '1h-3h', context),
-                const SizedBox(width: 12),
-                _buildLegendItem(theme.colorScheme.primary.withValues(alpha: 0.8), '3h-5h', context),
-                const SizedBox(width: 12),
-                _buildLegendItem(theme.colorScheme.primary, '>5h', context),
-              ],
-            ),
-          )
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Text(
+                'Less',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontSize: 10,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 4),
+              for (final m in const [0, 30, 90, 180, 300])
+                Container(
+                  width: cell,
+                  height: cell,
+                  margin: const EdgeInsets.only(right: 3),
+                  decoration: BoxDecoration(
+                    color: shade(m),
+                    borderRadius: BorderRadius.circular(2.5),
+                  ),
+                ),
+              Text(
+                'More',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontSize: 10,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildLegendItem(Color color, String label, BuildContext context) {
-    return Row(
-      children: [
-        Container(width: 10, height: 10, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
-        const SizedBox(width: 6),
-        Text(label, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
-      ],
+  Widget _records(
+    ThemeData theme,
+    List<FocusSession> sessions,
+    List<Task> tasks,
+  ) {
+    final sorted = [...sessions]
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final byId = {for (final t in tasks) t.id: t};
+    return _card(
+      theme,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _cardTitle(
+            theme,
+            'Focus records',
+            trailing: sorted.isEmpty ? null : 'Swipe to delete',
+          ),
+          if (sorted.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                'No focus sessions in this $_unit.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          for (final s in sorted.take(5))
+            _recordRow(theme, s, byId[s.linkedTaskId]),
+          if (sorted.length > 5)
+            TextButton(
+              onPressed: () => _showAllRecords(sorted, byId),
+              child: Text('Show all ${sorted.length}'),
+            ),
+        ],
+      ),
     );
   }
 
-  Widget _buildChartSection({
-    required String title, 
-    required String dateLabel, 
-    required VoidCallback onPrev,
-    required VoidCallback onNext,
-    required Widget child,
-    required BuildContext context,
-  }) {
-    final theme = Theme.of(context);
-    return PremiumCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  Widget _recordRow(ThemeData theme, FocusSession s, Task? task) {
+    final end = s.timestamp.add(Duration(minutes: s.durationMinutes));
+    return Dismissible(
+      key: ValueKey('record-${s.id}'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 12),
+        child: Icon(
+          LucideIcons.trash2,
+          size: 18,
+          color: theme.colorScheme.error,
+        ),
+      ),
+      onDismissed: (_) {
+        HapticFeedback.mediumImpact();
+        ref.read(focusSessionRepositoryProvider).deleteFocusSession(s.id);
+      },
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                LucideIcons.timer,
+                size: 16,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    task?.title ??
+                        (s.linkedTaskId == null ? 'No task' : 'Deleted task'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleMedium,
+                  ),
+                  Text(
+                    '${DateFormat('EEE d MMM').format(s.timestamp)} · ${DateFormat.Hm().format(s.timestamp)}–${DateFormat.Hm().format(end)}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Text(
+              formatMinutes(s.durationMinutes),
+              style: theme.textTheme.labelMedium,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAllRecords(List<FocusSession> sorted, Map<String, Task> byId) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(20),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+                child: Text(
+                  'Focus records',
+                  style: theme.textTheme.headlineSmall,
                 ),
-                child: Row(
+              ),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                   children: [
-                    GestureDetector(
-                      onTap: onPrev,
-                      child: Padding(
-                        padding: const EdgeInsets.all(4.0),
-                        child: Icon(LucideIcons.chevronLeft, color: theme.colorScheme.onSurface, size: 16),
-                      )
-                    ),
-                    const SizedBox(width: 8),
-                    Text(dateLabel, style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600)),
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: onNext,
-                      child: Padding(
-                        padding: const EdgeInsets.all(4.0),
-                        child: Icon(LucideIcons.chevronRight, color: theme.colorScheme.onSurface, size: 16),
-                      )
-                    ),
+                    for (final s in sorted)
+                      _recordRow(theme, s, byId[s.linkedTaskId]),
                   ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 24),
-          child,
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSegmentedControl(List<String> options, String selected, ValueChanged<String> onSelected, BuildContext context, {bool compact = false}) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
-        children: options.map((option) {
-          final isSelected = selected == option;
-          return Expanded(
-            flex: compact ? 0 : 1,
-            child: GestureDetector(
-              onTap: () => onSelected(option),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: EdgeInsets.symmetric(vertical: 10, horizontal: compact ? 16 : 8),
-                decoration: BoxDecoration(
-                  color: isSelected ? theme.colorScheme.surface : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: isSelected ? [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.05),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
-                    )
-                  ] : [],
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  option,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: isSelected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                  ),
-                ),
-              ),
-            ),
-          );
-        }).toList(),
-      ),
+        );
+      },
     );
   }
 
@@ -1054,7 +1001,10 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
     DateTime date = initialDate;
     final nowDateTime = DateTime.now();
     final startDefault = nowDateTime.subtract(const Duration(minutes: 45));
-    TimeOfDay startTime = TimeOfDay(hour: startDefault.hour, minute: startDefault.minute);
+    TimeOfDay startTime = TimeOfDay(
+      hour: startDefault.hour,
+      minute: startDefault.minute,
+    );
     TimeOfDay endTime = TimeOfDay.now();
     String? selectedTaskId;
 
@@ -1063,23 +1013,41 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
       builder: (ctx) {
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setModalState) {
             final theme = Theme.of(context);
-            
-            final startDateTime = DateTime(date.year, date.month, date.day, startTime.hour, startTime.minute);
-            var endDateTime = DateTime(date.year, date.month, date.day, endTime.hour, endTime.minute);
+
+            final startDateTime = DateTime(
+              date.year,
+              date.month,
+              date.day,
+              startTime.hour,
+              startTime.minute,
+            );
+            var endDateTime = DateTime(
+              date.year,
+              date.month,
+              date.day,
+              endTime.hour,
+              endTime.minute,
+            );
             if (endDateTime.isBefore(startDateTime)) {
               endDateTime = endDateTime.add(const Duration(days: 1));
             }
-            final durationMinutes = endDateTime.difference(startDateTime).inMinutes;
+            final durationMinutes = endDateTime
+                .difference(startDateTime)
+                .inMinutes;
 
             return Padding(
               padding: EdgeInsets.only(
                 bottom: MediaQuery.of(context).viewInsets.bottom,
-                left: 24, right: 24, top: 24
+                left: 24,
+                right: 24,
+                top: 24,
               ),
               child: SingleChildScrollView(
                 child: Column(
@@ -1089,25 +1057,41 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('Log Focus Record', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                        Text(
+                          'Log Focus Record',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                         IconButton(
                           icon: const Icon(LucideIcons.x),
                           onPressed: () => Navigator.pop(context),
-                        )
+                        ),
                       ],
                     ),
                     const SizedBox(height: 16),
                     Container(
                       decoration: BoxDecoration(
-                        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                        color: theme.colorScheme.surfaceContainerHighest
+                            .withValues(alpha: 0.3),
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.2)),
+                        border: Border.all(
+                          color: theme.colorScheme.outline.withValues(
+                            alpha: 0.2,
+                          ),
+                        ),
                       ),
                       child: Column(
                         children: [
                           ListTile(
-                            title: Text('Date: ${DateFormat.yMMMd().format(date)}', style: theme.textTheme.bodyMedium),
-                            trailing: Icon(LucideIcons.calendar, color: theme.colorScheme.primary),
+                            title: Text(
+                              'Date: ${DateFormat.yMMMd().format(date)}',
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                            trailing: Icon(
+                              LucideIcons.calendar,
+                              color: theme.colorScheme.primary,
+                            ),
                             onTap: () async {
                               final picked = await showDatePicker(
                                 context: context,
@@ -1122,10 +1106,19 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                           ),
                           const Divider(height: 1),
                           ListTile(
-                            title: Text('Start Time: ${startTime.format(context)}', style: theme.textTheme.bodyMedium),
-                            trailing: Icon(LucideIcons.clock, color: theme.colorScheme.primary),
+                            title: Text(
+                              'Start Time: ${startTime.format(context)}',
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                            trailing: Icon(
+                              LucideIcons.clock,
+                              color: theme.colorScheme.primary,
+                            ),
                             onTap: () async {
-                              final picked = await showTimePicker(context: context, initialTime: startTime);
+                              final picked = await showTimePicker(
+                                context: context,
+                                initialTime: startTime,
+                              );
                               if (picked != null) {
                                 setModalState(() => startTime = picked);
                               }
@@ -1133,10 +1126,19 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                           ),
                           const Divider(height: 1),
                           ListTile(
-                            title: Text('End Time: ${endTime.format(context)}', style: theme.textTheme.bodyMedium),
-                            trailing: Icon(LucideIcons.clock, color: theme.colorScheme.primary),
+                            title: Text(
+                              'End Time: ${endTime.format(context)}',
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                            trailing: Icon(
+                              LucideIcons.clock,
+                              color: theme.colorScheme.primary,
+                            ),
                             onTap: () async {
-                              final picked = await showTimePicker(context: context, initialTime: endTime);
+                              final picked = await showTimePicker(
+                                context: context,
+                                initialTime: endTime,
+                              );
                               if (picked != null) {
                                 setModalState(() => endTime = picked);
                               }
@@ -1148,47 +1150,81 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                     const SizedBox(height: 16),
                     Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
                       decoration: BoxDecoration(
-                        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
+                        color: theme.colorScheme.primaryContainer.withValues(
+                          alpha: 0.4,
+                        ),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text('Calculated Duration', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+                          Text(
+                            'Calculated Duration',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                           Text(
                             durationMinutes > 0
                                 ? '${durationMinutes ~/ 60 > 0 ? "${durationMinutes ~/ 60}h " : ""}${durationMinutes % 60}m ($durationMinutes min)'
                                 : '0 min',
-                            style: theme.textTheme.titleMedium?.copyWith(color: theme.colorScheme.primary, fontWeight: FontWeight.w700),
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              color: theme.colorScheme.primary,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ],
                       ),
                     ),
                     const SizedBox(height: 24),
-                    Text('Link to Task (Optional)', style: theme.textTheme.labelMedium),
+                    Text(
+                      'Link to Task (Optional)',
+                      style: theme.textTheme.labelMedium,
+                    ),
                     const SizedBox(height: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       decoration: BoxDecoration(
-                        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                        color: theme.colorScheme.surfaceContainerHighest
+                            .withValues(alpha: 0.3),
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.2)),
+                        border: Border.all(
+                          color: theme.colorScheme.outline.withValues(
+                            alpha: 0.2,
+                          ),
+                        ),
                       ),
                       child: DropdownButtonHideUnderline(
                         child: DropdownButton<String?>(
                           isExpanded: true,
                           value: selectedTaskId,
-                          hint: Text('Select a task', style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                          hint: Text(
+                            'Select a task',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
                           items: [
-                            DropdownMenuItem<String?>(value: null, child: const Text('None')),
-                            ...((ref.read(tasksStreamProvider).value ?? []).map((task) {
-                              return DropdownMenuItem<String?>(
-                                value: task.id,
-                                child: Text(task.title, overflow: TextOverflow.ellipsis),
-                              );
-                            })),
+                            DropdownMenuItem<String?>(
+                              value: null,
+                              child: const Text('None'),
+                            ),
+                            ...((ref.read(tasksStreamProvider).value ?? []).map(
+                              (task) {
+                                return DropdownMenuItem<String?>(
+                                  value: task.id,
+                                  child: Text(
+                                    task.title,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                );
+                              },
+                            )),
                           ],
                           onChanged: (val) {
                             setModalState(() => selectedTaskId = val);
@@ -1204,19 +1240,29 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                           backgroundColor: theme.colorScheme.primary,
                           foregroundColor: theme.colorScheme.onPrimary,
                           padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
                         ),
-                        onPressed: durationMinutes <= 0 ? null : () {
-                          final record = FocusSession(
-                            id: DateTime.now().millisecondsSinceEpoch.toString(),
-                            durationMinutes: durationMinutes,
-                            timestamp: startDateTime,
-                            linkedTaskId: selectedTaskId,
-                          );
-                          ref.read(focusSessionRepositoryProvider).addFocusSession(record);
-                          Navigator.pop(context);
-                        },
-                        child: const Text('Save Focus Record', style: TextStyle(fontWeight: FontWeight.bold)),
+                        onPressed: durationMinutes <= 0
+                            ? null
+                            : () {
+                                final record = FocusSession(
+                                  id: DateTime.now().millisecondsSinceEpoch
+                                      .toString(),
+                                  durationMinutes: durationMinutes,
+                                  timestamp: startDateTime,
+                                  linkedTaskId: selectedTaskId,
+                                );
+                                ref
+                                    .read(focusSessionRepositoryProvider)
+                                    .addFocusSession(record);
+                                Navigator.pop(context);
+                              },
+                        child: const Text(
+                          'Save Focus Record',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 32),
@@ -1224,9 +1270,9 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                 ),
               ),
             );
-          }
+          },
         );
-      }
+      },
     );
   }
 }

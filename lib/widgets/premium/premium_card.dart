@@ -17,21 +17,13 @@ class PremiumCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    
+
     Widget cardContent = Container(
       padding: padding,
       decoration: BoxDecoration(
         color: backgroundColor ?? theme.cardTheme.color,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: theme.colorScheme.outline, width: 1),
-        // Extremely subtle shadow for depth
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.02),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
       ),
       child: child,
     );

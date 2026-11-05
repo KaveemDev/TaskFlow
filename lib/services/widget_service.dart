@@ -8,18 +8,33 @@ import '../models/task_model.dart';
 import '../models/focus_session_model.dart';
 import '../models/event_model.dart';
 
-class _DeadlineItem {
+/// A task or event the countdown widget can show.
+class CountdownItem {
   final String id;
   final String title;
   final DateTime targetDate;
   final String label;
 
-  _DeadlineItem({
+  CountdownItem({
     required this.id,
     required this.title,
     required this.targetDate,
     required this.label,
   });
+
+  int daysLeft(DateTime now) => DateTime(
+    targetDate.year,
+    targetDate.month,
+    targetDate.day,
+  ).difference(DateTime(now.year, now.month, now.day)).inDays;
+
+  /// ("12", "days left"), ("0", "due today"), ("2", "days overdue")...
+  (String, String) countdown(DateTime now) {
+    final d = daysLeft(now);
+    if (d < 0) return ('${-d}', -d == 1 ? 'day overdue' : 'days overdue');
+    if (d == 0) return ('0', 'due today');
+    return ('$d', d == 1 ? 'day left' : 'days left');
+  }
 }
 
 class WidgetService {
@@ -53,20 +68,23 @@ class WidgetService {
       await HomeWidget.updateWidget(
         name: 'ProductivityWidgetProvider',
         androidName: 'ProductivityWidgetProvider',
-        qualifiedAndroidName: 'com.example.taskflow_suite.ProductivityWidgetProvider',
+        qualifiedAndroidName:
+            'com.example.taskflow_suite.ProductivityWidgetProvider',
         iOSName: 'ProductivityWidget',
       );
 
       await HomeWidget.updateWidget(
         name: 'QuickActionWidgetProvider',
         androidName: 'QuickActionWidgetProvider',
-        qualifiedAndroidName: 'com.example.taskflow_suite.QuickActionWidgetProvider',
+        qualifiedAndroidName:
+            'com.example.taskflow_suite.QuickActionWidgetProvider',
       );
 
       await HomeWidget.updateWidget(
         name: 'TaskDeadlineWidgetProvider',
         androidName: 'TaskDeadlineWidgetProvider',
-        qualifiedAndroidName: 'com.example.taskflow_suite.TaskDeadlineWidgetProvider',
+        qualifiedAndroidName:
+            'com.example.taskflow_suite.TaskDeadlineWidgetProvider',
       );
     } catch (e, stack) {
       debugPrint('WidgetService.updateWidget error: $e');
@@ -102,13 +120,79 @@ class WidgetService {
     final lower = title.toLowerCase();
     if (lower.contains('birth') || lower.contains('bday')) return '🎂';
     if (lower.contains('party') || lower.contains('celebrat')) return '🎉';
-    if (lower.contains('exam') || lower.contains('test') || lower.contains('study')) return '📚';
-    if (lower.contains('flight') || lower.contains('trip') || lower.contains('travel') || lower.contains('vacation')) return '✈️';
-    if (lower.contains('gym') || lower.contains('workout') || lower.contains('fit')) return '💪';
+    if (lower.contains('exam') ||
+        lower.contains('test') ||
+        lower.contains('study'))
+      return '📚';
+    if (lower.contains('flight') ||
+        lower.contains('trip') ||
+        lower.contains('travel') ||
+        lower.contains('vacation'))
+      return '✈️';
+    if (lower.contains('gym') ||
+        lower.contains('workout') ||
+        lower.contains('fit'))
+      return '💪';
     if (lower.contains('meet') || lower.contains('call')) return '💼';
-    if (lower.contains('launch') || lower.contains('release') || lower.contains('deploy')) return '🚀';
+    if (lower.contains('launch') ||
+        lower.contains('release') ||
+        lower.contains('deploy'))
+      return '🚀';
     if (lower.contains('doctor') || lower.contains('health')) return '🏥';
     return '🎯';
+  }
+
+  static Future<void> clearPinnedCountdown() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('pinned_countdown_id');
+  }
+
+  /// Open tasks with a due date and events that have not ended, soonest first.
+  static List<CountdownItem> countdownCandidates(
+    List<Task> tasks,
+    List<Event> events,
+    DateTime now,
+  ) {
+    final today = DateTime(now.year, now.month, now.day);
+    final items = <CountdownItem>[
+      for (final t in tasks)
+        if (!t.isCompleted && t.dueDate != null)
+          CountdownItem(
+            id: t.id,
+            title: t.title,
+            targetDate: t.dueDate!,
+            label: t.category.isNotEmpty
+                ? t.category.toUpperCase()
+                : 'TASK DEADLINE',
+          ),
+      for (final e in events)
+        if (!e.endTime.isBefore(today))
+          CountdownItem(
+            id: e.id,
+            title: e.title,
+            targetDate: e.startTime,
+            label: 'CALENDAR EVENT',
+          ),
+    ];
+    items.sort((a, b) => a.targetDate.compareTo(b.targetDate));
+    return items;
+  }
+
+  /// The pinned item if it is still a candidate, otherwise the nearest one that is not overdue
+  /// (or the nearest overdue one when nothing is upcoming).
+  static CountdownItem? pickCountdown(
+    List<CountdownItem> items,
+    String? pinnedId,
+    DateTime now,
+  ) {
+    if (items.isEmpty) return null;
+    for (final i in items) {
+      if (i.id == pinnedId) return i;
+    }
+    return items.firstWhere(
+      (i) => i.daysLeft(now) >= 0,
+      orElse: () => items.first,
+    );
   }
 
   static Future<void> _updateDeadlineWidgetData(
@@ -116,103 +200,28 @@ class WidgetService {
     List<Event> events = const [],
   ]) async {
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-
-    final List<_DeadlineItem> items = [];
-
-    for (final t in tasks) {
-      if (!t.isCompleted && t.dueDate != null) {
-        items.add(_DeadlineItem(
-          id: t.id,
-          title: t.title,
-          targetDate: t.dueDate!,
-          label: t.category.isNotEmpty ? t.category.toUpperCase() : 'TASK DEADLINE',
-        ));
-      }
-    }
-
-    for (final e in events) {
-      if (!e.endTime.isBefore(today)) {
-        items.add(_DeadlineItem(
-          id: e.id,
-          title: e.title,
-          targetDate: e.startTime,
-          label: 'CALENDAR EVENT',
-        ));
-      }
-    }
-
-    if (items.isEmpty) {
+    final prefs = await SharedPreferences.getInstance();
+    final selected = pickCountdown(
+      countdownCandidates(tasks, events, now),
+      prefs.getString('pinned_countdown_id'),
+      now,
+    );
+    if (selected == null) {
       await HomeWidget.saveWidgetData('deadline_task_title', 'Scheduled Task');
       await HomeWidget.saveWidgetData('deadline_task_emoji', '🎯');
-      await HomeWidget.saveWidgetData('deadline_task_category', 'UPCOMING DEADLINE');
-      await HomeWidget.saveWidgetData('deadline_task_subtitle', 'Tap to select task');
+      await HomeWidget.saveWidgetData(
+        'deadline_task_category',
+        'UPCOMING DEADLINE',
+      );
+      await HomeWidget.saveWidgetData(
+        'deadline_task_subtitle',
+        'Tap to select task',
+      );
       await HomeWidget.saveWidgetData('deadline_days_num', '--');
       await HomeWidget.saveWidgetData('deadline_days_unit', 'days left');
       return;
     }
-
-    final prefs = await SharedPreferences.getInstance();
-    final pinnedId = prefs.getString('pinned_countdown_id');
-
-    _DeadlineItem? selected;
-
-    if (pinnedId != null) {
-      for (final item in items) {
-        if (item.id == pinnedId) {
-          selected = item;
-          break;
-        }
-      }
-    }
-
-    if (selected == null) {
-      // Look explicitly for an August 31st task if present
-      for (final item in items) {
-        if (item.targetDate.month == 8 && item.targetDate.day == 31) {
-          selected = item;
-          break;
-        }
-      }
-    }
-
-    if (selected == null) {
-      // Look for any task in August
-      for (final item in items) {
-        if (item.targetDate.month == 8) {
-          selected = item;
-          break;
-        }
-      }
-    }
-
-    if (selected == null) {
-      items.sort((a, b) => a.targetDate.compareTo(b.targetDate));
-      selected = items.first;
-    }
-
-    final dueDay = DateTime(
-      selected.targetDate.year,
-      selected.targetDate.month,
-      selected.targetDate.day,
-    );
-    final daysLeft = dueDay.difference(today).inDays;
-
-    String daysNum;
-    String daysUnit;
-    if (daysLeft < 0) {
-      daysNum = '${-daysLeft}';
-      daysUnit = (-daysLeft == 1) ? 'day overdue' : 'days overdue';
-    } else if (daysLeft == 0) {
-      daysNum = '0';
-      daysUnit = 'due today';
-    } else if (daysLeft == 1) {
-      daysNum = '1';
-      daysUnit = 'day left';
-    } else {
-      daysNum = '$daysLeft';
-      daysUnit = 'days left';
-    }
+    final (daysNum, daysUnit) = selected.countdown(now);
 
     final formattedDate = DateFormat('E, MMM d').format(selected.targetDate);
     final emoji = _getEmojiForTitle(selected.title);
@@ -241,7 +250,8 @@ class WidgetService {
       await HomeWidget.updateWidget(
         name: 'QuickActionWidgetProvider',
         androidName: 'QuickActionWidgetProvider',
-        qualifiedAndroidName: 'com.example.taskflow_suite.QuickActionWidgetProvider',
+        qualifiedAndroidName:
+            'com.example.taskflow_suite.QuickActionWidgetProvider',
       );
     } catch (e) {
       debugPrint('WidgetService.updateQuickAction error: $e');
@@ -258,10 +268,7 @@ class _FocusDistributionWidget extends StatelessWidget {
   final List<Task> tasks;
   final List<FocusSession> sessions;
 
-  const _FocusDistributionWidget({
-    required this.tasks,
-    required this.sessions,
-  });
+  const _FocusDistributionWidget({required this.tasks, required this.sessions});
 
   @override
   Widget build(BuildContext context) {
@@ -289,7 +296,9 @@ class _FocusDistributionWidget extends StatelessWidget {
     final categoryColors = <String, Color>{};
     Color colorFor(String cat) {
       return categoryColors.putIfAbsent(
-          cat, () => palette[categoryColors.length % palette.length]);
+        cat,
+        () => palette[categoryColors.length % palette.length],
+      );
     }
 
     // Aggregate sessions into: dayIndex (0=Mon … 6=Sun) → category → minutes
@@ -298,14 +307,19 @@ class _FocusDistributionWidget extends StatelessWidget {
     int weekMinutes = 0;
 
     for (final s in sessions) {
-      final sDay = DateTime(s.timestamp.year, s.timestamp.month, s.timestamp.day);
+      final sDay = DateTime(
+        s.timestamp.year,
+        s.timestamp.month,
+        s.timestamp.day,
+      );
       final diffFromWeekStart = sDay.difference(weekStart).inDays;
       if (diffFromWeekStart < 0 || diffFromWeekStart > 6) continue;
 
       weekMinutes += s.durationMinutes;
       if (sDay == todayStart) todayMinutes += s.durationMinutes;
 
-      final cat = (s.linkedTaskId != null && taskCategory.containsKey(s.linkedTaskId))
+      final cat =
+          (s.linkedTaskId != null && taskCategory.containsKey(s.linkedTaskId))
           ? taskCategory[s.linkedTaskId]!
           : 'Other';
       colorFor(cat); // register color in order
@@ -353,10 +367,7 @@ class _FocusDistributionWidget extends StatelessWidget {
       width: 800,
       height: 400,
       child: MediaQuery(
-        data: const MediaQueryData(
-          size: Size(800, 400),
-          devicePixelRatio: 1.0,
-        ),
+        data: const MediaQueryData(size: Size(800, 400), devicePixelRatio: 1.0),
         child: DefaultTextStyle(
           style: const TextStyle(
             color: Colors.white,
@@ -371,7 +382,6 @@ class _FocusDistributionWidget extends StatelessWidget {
               borderRadius: BorderRadius.circular(36),
               clipBehavior: Clip.antiAlias,
               child: LayoutBuilder(
-
                 builder: (context, constraints) {
                   return Padding(
                     padding: EdgeInsets.fromLTRB(
@@ -392,9 +402,17 @@ class _FocusDistributionWidget extends StatelessWidget {
                               // Stats row
                               Row(
                                 children: [
-                                  _StatLabel(title: 'Today', value: todayStr, size: constraints),
+                                  _StatLabel(
+                                    title: 'Today',
+                                    value: todayStr,
+                                    size: constraints,
+                                  ),
                                   SizedBox(width: constraints.maxWidth * 0.07),
-                                  _StatLabel(title: 'Week', value: weekStr, size: constraints),
+                                  _StatLabel(
+                                    title: 'Week',
+                                    value: weekStr,
+                                    size: constraints,
+                                  ),
                                 ],
                               ),
                               SizedBox(height: constraints.maxHeight * 0.03),
@@ -416,7 +434,10 @@ class _FocusDistributionWidget extends StatelessWidget {
                         // RIGHT: legend
                         Expanded(
                           flex: 22,
-                          child: _Legend(categoryColors: categoryColors, size: constraints),
+                          child: _Legend(
+                            categoryColors: categoryColors,
+                            size: constraints,
+                          ),
                         ),
                       ],
                     ),
@@ -438,24 +459,34 @@ class _StatLabel extends StatelessWidget {
   final String title;
   final String value;
   final BoxConstraints size;
-  const _StatLabel({required this.title, required this.value, required this.size});
+  const _StatLabel({
+    required this.title,
+    required this.value,
+    required this.size,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title,
-            style: TextStyle(
-                color: const Color(0xFF9E9E9E), 
-                fontSize: size.maxHeight * 0.06, 
-                fontWeight: FontWeight.w400)),
-        Text(value,
-            style: TextStyle(
-                color: Colors.white, 
-                fontSize: size.maxHeight * 0.11, 
-                fontWeight: FontWeight.bold,
-                height: 1.1)),
+        Text(
+          title,
+          style: TextStyle(
+            color: const Color(0xFF9E9E9E),
+            fontSize: size.maxHeight * 0.06,
+            fontWeight: FontWeight.w400,
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: size.maxHeight * 0.11,
+            fontWeight: FontWeight.bold,
+            height: 1.1,
+          ),
+        ),
       ],
     );
   }
@@ -473,8 +504,13 @@ class _Legend extends StatelessWidget {
   Widget build(BuildContext context) {
     if (categoryColors.isEmpty) {
       return Center(
-        child: Text('No data',
-            style: TextStyle(color: const Color(0xFF9E9E9E), fontSize: size.maxHeight * 0.05)),
+        child: Text(
+          'No data',
+          style: TextStyle(
+            color: const Color(0xFF9E9E9E),
+            fontSize: size.maxHeight * 0.05,
+          ),
+        ),
       );
     }
     return Column(
@@ -486,14 +522,21 @@ class _Legend extends StatelessWidget {
           child: Row(
             children: [
               Container(
-                width: size.maxHeight * 0.045, height: size.maxHeight * 0.045,
-                decoration: BoxDecoration(color: e.value, shape: BoxShape.circle),
+                width: size.maxHeight * 0.045,
+                height: size.maxHeight * 0.045,
+                decoration: BoxDecoration(
+                  color: e.value,
+                  shape: BoxShape.circle,
+                ),
               ),
               SizedBox(width: size.maxWidth * 0.02),
               Expanded(
                 child: Text(
                   e.key,
-                  style: TextStyle(color: Colors.white, fontSize: size.maxHeight * 0.06),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: size.maxHeight * 0.06,
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -579,12 +622,24 @@ class _ChartPainter extends CustomPainter {
     final steps = topH ~/ stepH;
     for (int i = 0; i <= steps; i++) {
       final y = chartH - (chartH * i / steps);
-      _drawDashedLine(canvas, Offset(yLabelW, y), Offset(size.width, y), gridPaint);
+      _drawDashedLine(
+        canvas,
+        Offset(yLabelW, y),
+        Offset(size.width, y),
+        gridPaint,
+      );
 
       final hours = i * stepH;
       final label = hours == 0 ? '0m' : '${hours}h';
-      _drawText(canvas, label, Offset(0, y - (size.height * 0.035)), const Color(0xFF8E8E93), size.height * 0.0475,
-          align: ui.TextAlign.right, maxWidth: yLabelW - 6);
+      _drawText(
+        canvas,
+        label,
+        Offset(0, y - (size.height * 0.035)),
+        const Color(0xFF8E8E93),
+        size.height * 0.0475,
+        align: ui.TextAlign.right,
+        maxWidth: yLabelW - 6,
+      );
     }
 
     // ── bars ─────────────────────────────────────────────────────────────────
@@ -602,7 +657,10 @@ class _ChartPainter extends CustomPainter {
       );
       canvas.drawRRect(
         trackRect,
-        Paint()..color = Colors.white.withValues(alpha: dayIdx == todayIndex ? 0.09 : 0.04),
+        Paint()
+          ..color = Colors.white.withValues(
+            alpha: dayIdx == todayIndex ? 0.09 : 0.04,
+          ),
       );
 
       final total = dayCounts.values.fold(0.0, (a, b) => a + b);
@@ -613,7 +671,10 @@ class _ChartPainter extends CustomPainter {
           Rect.fromLTWH(x, chartH - 4, barW, 4),
           const Radius.circular(2),
         );
-        canvas.drawRRect(rect, Paint()..color = Colors.white.withValues(alpha: 0.15));
+        canvas.drawRRect(
+          rect,
+          Paint()..color = Colors.white.withValues(alpha: 0.15),
+        );
       } else {
         double currentPx = 0;
         final entries = dayCounts.entries.toList();
@@ -669,10 +730,7 @@ class _ChartPainter extends CustomPainter {
       ),
       textDirection: ui.TextDirection.ltr,
     )..layout();
-    tp.paint(
-      canvas,
-      Offset(centerOffset.dx - tp.width / 2, centerOffset.dy),
-    );
+    tp.paint(canvas, Offset(centerOffset.dx - tp.width / 2, centerOffset.dy));
   }
 
   void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint) {

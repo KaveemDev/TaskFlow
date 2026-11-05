@@ -27,7 +27,7 @@ class PremiumTextField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    
+
     return TextField(
       controller: controller,
       obscureText: obscureText,
@@ -39,7 +39,11 @@ class PremiumTextField extends StatelessWidget {
       decoration: InputDecoration(
         hintText: hintText,
         prefixIcon: prefixIcon != null
-            ? Icon(prefixIcon, color: theme.colorScheme.onSurfaceVariant, size: 20)
+            ? Icon(
+                prefixIcon,
+                color: theme.colorScheme.onSurfaceVariant,
+                size: 20,
+              )
             : null,
         suffixIcon: suffixIcon,
       ),

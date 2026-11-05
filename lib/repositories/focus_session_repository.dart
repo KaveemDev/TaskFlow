@@ -3,13 +3,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/focus_session_model.dart';
 
 class FocusSessionRepository {
-  final CollectionReference _sessionsCollection = FirebaseFirestore.instance.collection('focus_sessions');
+  final CollectionReference _sessionsCollection = FirebaseFirestore.instance
+      .collection('focus_sessions');
 
   FocusSessionRepository();
 
   Stream<List<FocusSession>> getFocusSessions() {
     return _sessionsCollection.snapshots().map((snapshot) {
-      return snapshot.docs.map((doc) => FocusSession.fromFirestore(doc)).toList();
+      return snapshot.docs
+          .map((doc) => FocusSession.fromFirestore(doc))
+          .toList();
     });
   }
 

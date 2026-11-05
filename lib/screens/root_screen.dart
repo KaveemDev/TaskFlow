@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'dart:ui';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../providers/providers.dart';
@@ -26,7 +25,8 @@ class RootScreen extends ConsumerStatefulWidget {
   ConsumerState<RootScreen> createState() => _RootScreenState();
 }
 
-class _RootScreenState extends ConsumerState<RootScreen> with WidgetsBindingObserver {
+class _RootScreenState extends ConsumerState<RootScreen>
+    with WidgetsBindingObserver {
   final List<Widget> _screens = [
     const TasksScreen(),
     const CalendarScreen(),
@@ -80,7 +80,10 @@ class _RootScreenState extends ConsumerState<RootScreen> with WidgetsBindingObse
       });
     } else if (uri.host == 'tasks' || uriStr.contains('tasks')) {
       ref.read(navigationProvider.notifier).setIndex(0);
-    } else if (uri.host == 'calendar' || uriStr.contains('calendar') || uri.host == 'deadline' || uriStr.contains('deadline')) {
+    } else if (uri.host == 'calendar' ||
+        uriStr.contains('calendar') ||
+        uri.host == 'deadline' ||
+        uriStr.contains('deadline')) {
       ref.read(navigationProvider.notifier).setIndex(1);
     }
   }
@@ -130,58 +133,40 @@ class _RootScreenState extends ConsumerState<RootScreen> with WidgetsBindingObse
       }
     });
 
+    const tabs = [
+      (0, LucideIcons.checkCircle2, 'Tasks'),
+      (1, LucideIcons.calendar, 'Calendar'),
+      (2, LucideIcons.timer, 'Focus'),
+      (3, LucideIcons.barChart3, 'Insights'),
+      (5, LucideIcons.slidersHorizontal, 'Settings'),
+    ];
+
     return Scaffold(
-      extendBody: true, // Needed for floating/glassmorphism navbar
       body: _screens[currentIndex]
-        .animate(key: ValueKey(currentIndex))
-        .fadeIn(duration: 300.ms, curve: Curves.easeOut)
-        .slideY(begin: 0.05, end: 0, duration: 300.ms, curve: Curves.easeOutQuart),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => showTaskModal(context, ref, null),
-        backgroundColor: theme.colorScheme.primary,
-        foregroundColor: theme.colorScheme.onPrimary,
-        elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: const Icon(LucideIcons.plus, size: 28),
-      ).animate().scale(delay: 200.ms, duration: 400.ms, curve: Curves.elasticOut),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      bottomNavigationBar: Container(
+          .animate(key: ValueKey(currentIndex))
+          .fadeIn(duration: 200.ms, curve: Curves.easeOut),
+      bottomNavigationBar: DecoratedBox(
         decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: theme.colorScheme.outline.withValues(alpha: 0.5), width: 0.5)),
+          color: theme.colorScheme.surface,
+          border: Border(top: BorderSide(color: theme.colorScheme.outline)),
         ),
-        child: ClipRect(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: BottomAppBar(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              color: theme.colorScheme.surface.withValues(alpha: 0.7),
-              elevation: 0,
-              shape: const CircularNotchedRectangle(),
-              notchMargin: 12.0,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
+        child: SafeArea(
+          top: false,
+          child: SizedBox(
+            height: 60,
+            child: Row(
+              children: [
+                for (final (index, icon, label) in tabs)
                   Expanded(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _buildNavItem(context, currentIndex, 0, LucideIcons.checkCircle2, 'Tasks'),
-                        _buildNavItem(context, currentIndex, 1, LucideIcons.calendar, 'Calendar'),
-                      ],
+                    child: _buildNavItem(
+                      context,
+                      currentIndex,
+                      index,
+                      icon,
+                      label,
                     ),
                   ),
-                  const SizedBox(width: 64), // Space for FAB
-                  Expanded(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _buildNavItem(context, currentIndex, 3, LucideIcons.barChart3, 'Insights'),
-                        _buildNavItem(context, currentIndex, 5, LucideIcons.settings, 'Settings'),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+              ],
             ),
           ),
         ),
@@ -189,37 +174,40 @@ class _RootScreenState extends ConsumerState<RootScreen> with WidgetsBindingObse
     );
   }
 
-  Widget _buildNavItem(BuildContext context, int currentIndex, int itemIndex, IconData icon, String label) {
+  Widget _buildNavItem(
+    BuildContext context,
+    int currentIndex,
+    int itemIndex,
+    IconData icon,
+    String label,
+  ) {
     final isSelected = currentIndex == itemIndex;
     final theme = Theme.of(context);
-    
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {
-        HapticFeedback.selectionClick();
-        ref.read(navigationProvider.notifier).setIndex(itemIndex);
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8.0),
+    final color = isSelected
+        ? theme.colorScheme.primary
+        : theme.colorScheme.onSurfaceVariant;
+
+    return Semantics(
+      button: true,
+      selected: isSelected,
+      label: label,
+      excludeSemantics: true,
+      child: InkResponse(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          ref.read(navigationProvider.notifier).setIndex(itemIndex);
+        },
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: 24,
-              color: isSelected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
-            )
-            .animate(target: isSelected ? 1 : 0)
-            .scaleXY(begin: 1.0, end: 1.1, duration: 150.ms, curve: Curves.easeOutBack)
-            .tint(color: theme.colorScheme.primary, duration: 150.ms),
+            Icon(icon, size: 22, color: color),
             const SizedBox(height: 4),
             Text(
               label,
               style: TextStyle(
-                fontSize: 10,
-                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                color: isSelected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                fontSize: 11,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                color: color,
               ),
             ),
           ],
