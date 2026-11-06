@@ -9,4 +9,6 @@ class NavigationNotifier extends Notifier<int> {
   }
 }
 
-final navigationProvider = NotifierProvider<NavigationNotifier, int>(NavigationNotifier.new);
+final navigationProvider = NotifierProvider<NavigationNotifier, int>(
+  NavigationNotifier.new,
+);

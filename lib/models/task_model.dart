@@ -20,18 +20,10 @@ class SubTask {
   }
 
   Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'title': title,
-      'isCompleted': isCompleted,
-    };
+    return {'id': id, 'title': title, 'isCompleted': isCompleted};
   }
 
-  SubTask copyWith({
-    String? id,
-    String? title,
-    bool? isCompleted,
-  }) {
+  SubTask copyWith({String? id, String? title, bool? isCompleted}) {
     return SubTask(
       id: id ?? this.id,
       title: title ?? this.title,
@@ -50,7 +42,7 @@ class Task {
   final DateTime? dueDate;
   final DateTime? startTime;
   final DateTime? endTime;
-  
+
   // Recurrence properties
   final String? repeatMode; // 'Daily', 'Weekly', 'Monthly', 'None'
   final DateTime? repeatEndDate;
@@ -60,6 +52,16 @@ class Task {
   // null or -1 indicates no notification
   final int? notificationMinutesBefore;
   final List<SubTask> subtasks;
+
+  /// How long the task takes. With a start time it also sets [endTime], so the calendar can draw it.
+  final int? durationMinutes;
+
+  /// Stored duration, or the length of the start–end range for tasks saved before durations existed.
+  int? get effectiveDurationMinutes =>
+      durationMinutes ??
+      (startTime != null && endTime != null
+          ? endTime!.difference(startTime!).inMinutes
+          : null);
 
   Task({
     required this.id,
@@ -76,6 +78,7 @@ class Task {
     this.parentTaskId,
     this.notificationMinutesBefore = 0,
     this.subtasks = const [],
+    this.durationMinutes,
   });
 
   factory Task.fromFirestore(DocumentSnapshot doc) {
@@ -87,17 +90,29 @@ class Task {
       isCompleted: data['isCompleted'] ?? false,
       priority: data['priority'] ?? 'Low',
       category: data['category'] ?? 'General',
-      dueDate: data['dueDate'] != null ? (data['dueDate'] as Timestamp).toDate() : null,
-      startTime: data['startTime'] != null ? (data['startTime'] as Timestamp).toDate() : null,
-      endTime: data['endTime'] != null ? (data['endTime'] as Timestamp).toDate() : null,
+      dueDate: data['dueDate'] != null
+          ? (data['dueDate'] as Timestamp).toDate()
+          : null,
+      startTime: data['startTime'] != null
+          ? (data['startTime'] as Timestamp).toDate()
+          : null,
+      endTime: data['endTime'] != null
+          ? (data['endTime'] as Timestamp).toDate()
+          : null,
       repeatMode: data['repeatMode'],
-      repeatEndDate: data['repeatEndDate'] != null ? (data['repeatEndDate'] as Timestamp).toDate() : null,
+      repeatEndDate: data['repeatEndDate'] != null
+          ? (data['repeatEndDate'] as Timestamp).toDate()
+          : null,
       parentTaskId: data['parentTaskId'],
       notificationMinutesBefore: data['notificationMinutesBefore'] ?? 0,
-      subtasks: (data['subtasks'] as List<dynamic>?)
-              ?.map((st) => SubTask.fromMap(Map<String, dynamic>.from(st as Map)))
+      subtasks:
+          (data['subtasks'] as List<dynamic>?)
+              ?.map(
+                (st) => SubTask.fromMap(Map<String, dynamic>.from(st as Map)),
+              )
               .toList() ??
           const [],
+      durationMinutes: (data['durationMinutes'] as num?)?.toInt(),
     );
   }
 
@@ -109,16 +124,19 @@ class Task {
       'priority': priority,
       'category': category,
       if (dueDate != null) 'dueDate': Timestamp.fromDate(dueDate!),
-      if (startTime != null) 'startTime': Timestamp.fromDate(startTime!),
-      if (endTime != null) 'endTime': Timestamp.fromDate(endTime!),
+      'startTime': startTime == null ? null : Timestamp.fromDate(startTime!),
+      'endTime': endTime == null ? null : Timestamp.fromDate(endTime!),
       if (repeatMode != null) 'repeatMode': repeatMode,
-      if (repeatEndDate != null) 'repeatEndDate': Timestamp.fromDate(repeatEndDate!),
+      if (repeatEndDate != null)
+        'repeatEndDate': Timestamp.fromDate(repeatEndDate!),
       if (parentTaskId != null) 'parentTaskId': parentTaskId,
-      if (notificationMinutesBefore != null) 'notificationMinutesBefore': notificationMinutesBefore,
+      if (notificationMinutesBefore != null)
+        'notificationMinutesBefore': notificationMinutesBefore,
       'subtasks': subtasks.map((st) => st.toMap()).toList(),
+      'durationMinutes': durationMinutes,
     };
   }
-  
+
   Task copyWith({
     String? title,
     String? description,
@@ -133,6 +151,7 @@ class Task {
     String? parentTaskId,
     int? notificationMinutesBefore,
     List<SubTask>? subtasks,
+    int? durationMinutes,
   }) {
     return Task(
       id: id,
@@ -147,8 +166,10 @@ class Task {
       repeatMode: repeatMode ?? this.repeatMode,
       repeatEndDate: repeatEndDate ?? this.repeatEndDate,
       parentTaskId: parentTaskId ?? this.parentTaskId,
-      notificationMinutesBefore: notificationMinutesBefore ?? this.notificationMinutesBefore,
+      notificationMinutesBefore:
+          notificationMinutesBefore ?? this.notificationMinutesBefore,
       subtasks: subtasks ?? this.subtasks,
+      durationMinutes: durationMinutes ?? this.durationMinutes,
     );
   }
 }

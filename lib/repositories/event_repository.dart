@@ -4,7 +4,8 @@ import '../models/event_model.dart';
 import '../services/notification_service.dart';
 
 class EventRepository {
-  final CollectionReference _eventsCollection = FirebaseFirestore.instance.collection('events');
+  final CollectionReference _eventsCollection = FirebaseFirestore.instance
+      .collection('events');
 
   EventRepository();
 
@@ -15,7 +16,9 @@ class EventRepository {
   }
 
   Future<void> addEvent(Event event) async {
-    final String docId = event.id.isEmpty ? _eventsCollection.doc().id : event.id;
+    final String docId = event.id.isEmpty
+        ? _eventsCollection.doc().id
+        : event.id;
     final eventWithId = event.copyWith(id: docId);
     await _eventsCollection.doc(docId).set(eventWithId.toFirestore());
     await NotificationService().scheduleEventNotification(eventWithId);
@@ -31,4 +34,3 @@ class EventRepository {
     await NotificationService().cancelNotification(id.hashCode);
   }
 }
-

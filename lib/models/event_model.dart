@@ -40,7 +40,8 @@ class Event {
       endTime: endTime ?? this.endTime,
       recurrenceRule: recurrenceRule ?? this.recurrenceRule,
       colorHex: colorHex ?? this.colorHex,
-      notificationMinutesBefore: notificationMinutesBefore ?? this.notificationMinutesBefore,
+      notificationMinutesBefore:
+          notificationMinutesBefore ?? this.notificationMinutesBefore,
     );
   }
 
@@ -58,7 +59,10 @@ class Event {
       title: data['title'] ?? 'Event',
       description: data['description'],
       startTime: parseTime(data['startTime'], DateTime.now()),
-      endTime: parseTime(data['endTime'], DateTime.now().add(const Duration(hours: 1))),
+      endTime: parseTime(
+        data['endTime'],
+        DateTime.now().add(const Duration(hours: 1)),
+      ),
       recurrenceRule: data['recurrenceRule'],
       colorHex: data['colorHex'],
       notificationMinutesBefore: data['notificationMinutesBefore'] != null
@@ -70,12 +74,14 @@ class Event {
   Map<String, dynamic> toFirestore() {
     return {
       'title': title,
-      if (description != null && description!.isNotEmpty) 'description': description,
+      if (description != null && description!.isNotEmpty)
+        'description': description,
       'startTime': Timestamp.fromDate(startTime),
       'endTime': Timestamp.fromDate(endTime),
       if (recurrenceRule != null) 'recurrenceRule': recurrenceRule,
       if (colorHex != null && colorHex!.isNotEmpty) 'colorHex': colorHex,
-      if (notificationMinutesBefore != null) 'notificationMinutesBefore': notificationMinutesBefore,
+      if (notificationMinutesBefore != null)
+        'notificationMinutesBefore': notificationMinutesBefore,
     };
   }
 

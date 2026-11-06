@@ -7,13 +7,13 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/task_model.dart';
 import '../models/event_model.dart';
 
-
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
   factory NotificationService() => _instance;
   NotificationService._internal();
 
-  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+      FlutterLocalNotificationsPlugin();
   bool _isInitialized = false;
 
   Future<void> init() async {
@@ -21,15 +21,17 @@ class NotificationService {
     if (_isInitialized) return;
 
     try {
-      const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
-      const DarwinInitializationSettings initializationSettingsDarwin = DarwinInitializationSettings(
-        requestAlertPermission: true,
-        requestBadgePermission: true,
-        requestSoundPermission: true,
-        defaultPresentAlert: true,
-        defaultPresentBadge: true,
-        defaultPresentSound: true,
-      );
+      const AndroidInitializationSettings initializationSettingsAndroid =
+          AndroidInitializationSettings('@mipmap/ic_launcher');
+      const DarwinInitializationSettings initializationSettingsDarwin =
+          DarwinInitializationSettings(
+            requestAlertPermission: true,
+            requestBadgePermission: true,
+            requestSoundPermission: true,
+            defaultPresentAlert: true,
+            defaultPresentBadge: true,
+            defaultPresentSound: true,
+          );
 
       await flutterLocalNotificationsPlugin.initialize(
         settings: const InitializationSettings(
@@ -48,7 +50,9 @@ class NotificationService {
         enableVibration: true,
       );
       final androidImplementation = flutterLocalNotificationsPlugin
-          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
       await androidImplementation?.createNotificationChannel(channel);
 
       _isInitialized = true;
@@ -76,15 +80,20 @@ class NotificationService {
       granted = status.isGranted;
 
       final androidImplementation = flutterLocalNotificationsPlugin
-          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
       if (androidImplementation != null) {
-        final notifGranted = await androidImplementation.requestNotificationsPermission();
+        final notifGranted = await androidImplementation
+            .requestNotificationsPermission();
         await androidImplementation.requestExactAlarmsPermission();
         granted = notifGranted ?? granted;
       }
 
       final iosImplementation = flutterLocalNotificationsPlugin
-          .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
+          .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin
+          >();
       if (iosImplementation != null) {
         final iosGranted = await iosImplementation.requestPermissions(
           alert: true,
@@ -95,7 +104,9 @@ class NotificationService {
       }
 
       final macosImplementation = flutterLocalNotificationsPlugin
-          .resolvePlatformSpecificImplementation<MacOSFlutterLocalNotificationsPlugin>();
+          .resolvePlatformSpecificImplementation<
+            MacOSFlutterLocalNotificationsPlugin
+          >();
       if (macosImplementation != null) {
         final macGranted = await macosImplementation.requestPermissions(
           alert: true,
@@ -149,7 +160,9 @@ class NotificationService {
   Future<void> scheduleTaskNotification(Task task) async {
     if (kIsWeb) return;
     // If completed or reminder disabled (-1 or null), cancel any scheduled notification
-    if (task.isCompleted || task.notificationMinutesBefore == null || task.notificationMinutesBefore == -1) {
+    if (task.isCompleted ||
+        task.notificationMinutesBefore == null ||
+        task.notificationMinutesBefore == -1) {
       await cancelNotification(task.id.hashCode);
       return;
     }
@@ -159,7 +172,9 @@ class NotificationService {
     if (targetTime == null) return;
 
     final int minutesBefore = task.notificationMinutesBefore ?? 0;
-    DateTime scheduledDateTime = targetTime.subtract(Duration(minutes: minutesBefore));
+    DateTime scheduledDateTime = targetTime.subtract(
+      Duration(minutes: minutesBefore),
+    );
 
     // If scheduled time already passed slightly but task has not started yet,
     // notify in 5 seconds so the user still receives the reminder.
@@ -235,14 +250,17 @@ class NotificationService {
 
   Future<void> scheduleEventNotification(Event event) async {
     if (kIsWeb) return;
-    if (event.notificationMinutesBefore == null || event.notificationMinutesBefore == -1) {
+    if (event.notificationMinutesBefore == null ||
+        event.notificationMinutesBefore == -1) {
       await cancelNotification(event.id.hashCode);
       return;
     }
 
     final DateTime targetTime = event.startTime;
     final int minutesBefore = event.notificationMinutesBefore ?? 0;
-    DateTime scheduledDateTime = targetTime.subtract(Duration(minutes: minutesBefore));
+    DateTime scheduledDateTime = targetTime.subtract(
+      Duration(minutes: minutesBefore),
+    );
 
     if (scheduledDateTime.isBefore(DateTime.now())) {
       if (targetTime.isAfter(DateTime.now())) {
@@ -321,7 +339,8 @@ class NotificationService {
   Future<void> clearDeliveredNotifications() async {
     if (kIsWeb) return;
     try {
-      final activeNotifications = await flutterLocalNotificationsPlugin.getActiveNotifications();
+      final activeNotifications = await flutterLocalNotificationsPlugin
+          .getActiveNotifications();
       for (final active in activeNotifications) {
         if (active.id != null) {
           await flutterLocalNotificationsPlugin.cancel(id: active.id!);
@@ -332,4 +351,3 @@ class NotificationService {
     }
   }
 }
-

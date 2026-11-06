@@ -34,7 +34,7 @@ class CategoriesNotifier extends Notifier<List<String>> {
 
   Future<void> removeCategory(String category) async {
     if (state.length <= 1) return;
-    
+
     final newState = state.where((c) => c != category).toList();
     state = newState;
     final prefs = await SharedPreferences.getInstance();
@@ -42,4 +42,6 @@ class CategoriesNotifier extends Notifier<List<String>> {
   }
 }
 
-final categoriesProvider = NotifierProvider<CategoriesNotifier, List<String>>(CategoriesNotifier.new);
+final categoriesProvider = NotifierProvider<CategoriesNotifier, List<String>>(
+  CategoriesNotifier.new,
+);

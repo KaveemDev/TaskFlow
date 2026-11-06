@@ -9,10 +9,12 @@ class ProductivityChartWidget extends ConsumerStatefulWidget {
   const ProductivityChartWidget({super.key});
 
   @override
-  ConsumerState<ProductivityChartWidget> createState() => _ProductivityChartWidgetState();
+  ConsumerState<ProductivityChartWidget> createState() =>
+      _ProductivityChartWidgetState();
 }
 
-class _ProductivityChartWidgetState extends ConsumerState<ProductivityChartWidget> {
+class _ProductivityChartWidgetState
+    extends ConsumerState<ProductivityChartWidget> {
   String _dateRange = 'Last 7 Days';
 
   @override
@@ -37,9 +39,18 @@ class _ProductivityChartWidgetState extends ConsumerState<ProductivityChartWidge
                 DropdownButtonHideUnderline(
                   child: DropdownButton<String>(
                     value: _dateRange,
-                    icon: Icon(Icons.arrow_drop_down, color: Theme.of(context).colorScheme.primary),
-                    style: TextStyle(color: Theme.of(context).colorScheme.primary, fontSize: 12, fontWeight: FontWeight.w600),
-                    items: ['Last 7 Days', 'This Month', 'This Year'].map((String value) {
+                    icon: Icon(
+                      Icons.arrow_drop_down,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.primary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    items: ['Last 7 Days', 'This Month', 'This Year'].map((
+                      String value,
+                    ) {
                       return DropdownMenuItem<String>(
                         value: value,
                         child: Text(value),
@@ -62,7 +73,11 @@ class _ProductivityChartWidgetState extends ConsumerState<ProductivityChartWidge
                   DateTime startDate;
 
                   if (_dateRange == 'Last 7 Days') {
-                    startDate = DateTime(now.year, now.month, now.day).subtract(Duration(days: 6));
+                    startDate = DateTime(
+                      now.year,
+                      now.month,
+                      now.day,
+                    ).subtract(Duration(days: 6));
                   } else if (_dateRange == 'This Month') {
                     startDate = DateTime(now.year, now.month, 1);
                   } else {
@@ -71,7 +86,9 @@ class _ProductivityChartWidgetState extends ConsumerState<ProductivityChartWidge
 
                   final filteredTasks = tasks.where((t) {
                     if (!t.isCompleted || t.dueDate == null) return false;
-                    return t.dueDate!.isAfter(startDate.subtract(Duration(days: 1)));
+                    return t.dueDate!.isAfter(
+                      startDate.subtract(Duration(days: 1)),
+                    );
                   }).toList();
 
                   return _buildBarChart(filteredTasks, startDate);
@@ -87,7 +104,9 @@ class _ProductivityChartWidgetState extends ConsumerState<ProductivityChartWidge
   }
 
   Widget _buildBarChart(List<Task> tasks, DateTime startDate) {
-    final int itemsCount = _dateRange == 'This Year' ? 12 : (_dateRange == 'This Month' ? 31 : 7);
+    final int itemsCount = _dateRange == 'This Year'
+        ? 12
+        : (_dateRange == 'This Month' ? 31 : 7);
     Map<int, int> counts = {};
 
     for (var t in tasks) {
@@ -99,7 +118,9 @@ class _ProductivityChartWidgetState extends ConsumerState<ProductivityChartWidge
         } else {
           // Group by days from start date
           int diff = DateTime(t.dueDate!.year, t.dueDate!.month, t.dueDate!.day)
-              .difference(DateTime(startDate.year, startDate.month, startDate.day))
+              .difference(
+                DateTime(startDate.year, startDate.month, startDate.day),
+              )
               .inDays;
           if (diff >= 0 && diff < itemsCount) {
             counts[diff] = (counts[diff] ?? 0) + 1;
@@ -130,7 +151,7 @@ class _ProductivityChartWidgetState extends ConsumerState<ProductivityChartWidge
               toY: _getMaxY(counts) * 1.2,
               color: Theme.of(context).colorScheme.surfaceContainerHighest,
             ),
-          )
+          ),
         ],
       );
     });
@@ -146,7 +167,10 @@ class _ProductivityChartWidgetState extends ConsumerState<ProductivityChartWidge
             getTooltipItem: (group, groupIndex, rod, rodIndex) {
               return BarTooltipItem(
                 '${rod.toY.toInt()} tasks',
-                TextStyle(color: Theme.of(context).colorScheme.surface, fontWeight: FontWeight.bold),
+                TextStyle(
+                  color: Theme.of(context).colorScheme.surface,
+                  fontWeight: FontWeight.bold,
+                ),
               );
             },
           ),

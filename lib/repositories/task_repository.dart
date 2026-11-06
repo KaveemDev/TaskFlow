@@ -4,7 +4,8 @@ import '../models/task_model.dart';
 import '../services/notification_service.dart';
 
 class TaskRepository {
-  final CollectionReference _tasksCollection = FirebaseFirestore.instance.collection('tasks');
+  final CollectionReference _tasksCollection = FirebaseFirestore.instance
+      .collection('tasks');
 
   TaskRepository();
 

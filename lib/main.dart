@@ -12,7 +12,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await WidgetService.init();
   await NotificationService().init();
-  
+
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
@@ -20,12 +20,8 @@ void main() async {
   } catch (e) {
     // Ignore initialization errors
   }
-  
-  runApp(
-    const ProviderScope(
-      child: KronomApp(),
-    ),
-  );
+
+  runApp(const ProviderScope(child: KronomApp()));
 }
 
 class KronomApp extends ConsumerWidget {
@@ -34,12 +30,13 @@ class KronomApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeProvider);
+    final accent = ref.watch(accentProvider);
 
     return MaterialApp(
       title: 'Kronom',
       themeMode: themeMode,
-      theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme,
+      theme: AppTheme.light(accent),
+      darkTheme: AppTheme.dark(accent),
       home: const RootScreen(),
       debugShowCheckedModeBanner: false,
     );
