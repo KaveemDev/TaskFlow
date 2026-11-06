@@ -73,6 +73,8 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
 
             final onDay = all
                 .where((t) {
+                  // A task shows on its due day and on every day of its From–To slot.
+                  if (slotCoversDay(t.startTime, t.endTime, _day)) return true;
                   if (t.dueDate == null)
                     return _isToday(_day); // undated tasks live on today
                   return DateUtils.isSameDay(t.dueDate, _day);
@@ -333,10 +335,12 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
             : DateFormat('d MMM').format(t.dueDate!),
       );
     } else if (t.startTime != null) {
-      parts.add(DateFormat.Hm().format(t.startTime!));
+      parts.add(timeRange(t.startTime!, t.endTime));
+    } else if (t.durationMinutes != null) {
+      parts.add(
+        formatMinutes(t.durationMinutes!),
+      ); // tasks saved with only a length
     }
-    final d = t.effectiveDurationMinutes;
-    if (d != null && d > 0) parts.add(formatMinutes(d));
     parts.add(t.category);
     if (t.subtasks.isNotEmpty) {
       parts.add(
@@ -500,26 +504,20 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
       }
 
       if (shouldCreate) {
-        DateTime? nextStartTime;
-        DateTime? nextEndTime;
-        if (task.startTime != null && task.dueDate != null) {
-          nextStartTime = DateTime(
-            nextDueDate.year,
-            nextDueDate.month,
-            nextDueDate.day,
-            task.startTime!.hour,
-            task.startTime!.minute,
-          );
-        }
-        if (task.endTime != null && task.dueDate != null) {
-          nextEndTime = DateTime(
-            nextDueDate.year,
-            nextDueDate.month,
-            nextDueDate.day,
-            task.endTime!.hour,
-            task.endTime!.minute,
-          );
-        }
+        // Move the From–To slot by as many calendar days as the due date moved,
+        // so slots that span several days keep their shape.
+        final base = task.dueDate ?? DateTime.now();
+        final shift = DateTime.utc(
+          nextDueDate.year,
+          nextDueDate.month,
+          nextDueDate.day,
+        ).difference(DateTime.utc(base.year, base.month, base.day)).inDays;
+        final nextStartTime = task.startTime == null
+            ? null
+            : shiftDays(task.startTime!, shift);
+        final nextEndTime = task.endTime == null
+            ? null
+            : shiftDays(task.endTime!, shift);
 
         final nextTask = Task(
           id: DateTime.now().millisecondsSinceEpoch.toString(), // new ID
@@ -600,10 +598,9 @@ class _TaskSheetState extends ConsumerState<_TaskSheet> {
   late String _repeat = widget.existingTask?.repeatMode ?? 'None';
   late DateTime? _repeatEnd = widget.existingTask?.repeatEndDate;
   late DateTime? _due = widget.existingTask?.dueDate ?? widget.initialDate;
-  late TimeOfDay? _start = widget.existingTask?.startTime != null
-      ? TimeOfDay.fromDateTime(widget.existingTask!.startTime!)
-      : null;
-  late int? _duration = widget.existingTask?.effectiveDurationMinutes;
+  // When to work on the task, like an event's time slot. May span days.
+  late DateTime? _from = widget.existingTask?.startTime;
+  late DateTime? _to = widget.existingTask?.endTime;
   late int _reminder = widget.existingTask?.notificationMinutesBefore ?? 15;
   late final List<SubTask> _subtasks = List.of(
     widget.existingTask?.subtasks ?? const [],
@@ -617,28 +614,21 @@ class _TaskSheetState extends ConsumerState<_TaskSheet> {
     super.dispose();
   }
 
-  String _hm(TimeOfDay t) =>
-      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-
-  String get _dueLabel {
-    if (_due == null) return 'None';
+  String _dayLabel(DateTime d) {
     final diff = DateUtils.dateOnly(
-      _due!,
+      d,
     ).difference(DateUtils.dateOnly(DateTime.now())).inDays;
-    final day = diff == 0
+    return diff == 0
         ? 'Today'
         : diff == 1
         ? 'Tomorrow'
-        : DateFormat('EEE d MMM').format(_due!);
-    if (_start == null) return day;
-    if (_duration == null) return '$day, ${_hm(_start!)}';
-    final endMinutes = _start!.hour * 60 + _start!.minute + _duration!;
-    final end = TimeOfDay(
-      hour: (endMinutes ~/ 60) % 24,
-      minute: endMinutes % 60,
-    );
-    return '$day, ${_hm(_start!)}–${_hm(end)}';
+        : diff == -1
+        ? 'Yesterday'
+        : DateFormat('EEE d MMM').format(d);
   }
+
+  String _dateTimeLabel(DateTime? d) =>
+      d == null ? 'Not set' : '${_dayLabel(d)}, ${DateFormat.Hm().format(d)}';
 
   @override
   Widget build(BuildContext context) {
@@ -740,7 +730,7 @@ class _TaskSheetState extends ConsumerState<_TaskSheet> {
                         _propRow(
                           LucideIcons.calendar,
                           'Due',
-                          _dueLabel,
+                          _due == null ? 'None' : _dayLabel(_due!),
                           valueColor: _due != null
                               ? theme.colorScheme.primary
                               : theme.colorScheme.onSurfaceVariant,
@@ -748,15 +738,23 @@ class _TaskSheetState extends ConsumerState<_TaskSheet> {
                         ),
                         const Divider(),
                         _propRow(
-                          LucideIcons.hourglass,
-                          'Duration',
-                          _duration == null
-                              ? 'None'
-                              : formatMinutes(_duration!),
-                          valueColor: _duration == null
+                          LucideIcons.clock,
+                          'From',
+                          _dateTimeLabel(_from),
+                          valueColor: _from == null
                               ? theme.colorScheme.onSurfaceVariant
                               : null,
-                          onTap: _pickDuration,
+                          onTap: () => _pickSlot(isFrom: true),
+                        ),
+                        const Divider(),
+                        _propRow(
+                          LucideIcons.clockArrowDown,
+                          'To',
+                          _dateTimeLabel(_to),
+                          valueColor: _to == null
+                              ? theme.colorScheme.onSurfaceVariant
+                              : null,
+                          onTap: () => _pickSlot(isFrom: false),
                         ),
                         const Divider(),
                         _propRow(
@@ -1051,50 +1049,92 @@ class _TaskSheetState extends ConsumerState<_TaskSheet> {
   }
 
   Future<void> _pickWhen() async {
-    const pickDate = 'date', pickStart = 'start', clear = 'clear';
-    final choice = await _options<String>('Due', {
-      pickDate:
-          'Date · ${_due == null ? 'None' : DateFormat('EEE d MMM').format(_due!)}',
-      pickStart: 'Start time · ${_start == null ? 'None' : _hm(_start!)}',
-      clear: 'Clear',
-    }, null);
-    if (!mounted || choice == null) return;
-    switch (choice) {
-      case pickDate:
-        final d = await showDatePicker(
-          context: context,
-          initialDate: _due ?? DateTime.now(),
-          firstDate: DateTime(2020),
-          lastDate: DateTime(2035),
-        );
-        if (d != null) setState(() => _due = d);
-      case pickStart:
-        final t = await showTimePicker(
-          context: context,
-          initialTime: _start ?? TimeOfDay.now(),
-        );
-        if (t != null)
-          setState(() {
-            _start = t;
-            _due ??= DateTime.now();
-          });
-      case clear:
-        setState(() {
-          _due = null;
-          _start = null;
-        });
+    if (_due != null) {
+      final choice = await _options<String>('Due', {
+        'change': 'Change date',
+        'clear': 'No due date',
+      }, null);
+      if (!mounted || choice == null) return;
+      if (choice == 'clear') return setState(() => _due = null);
     }
+    final d = await showDatePicker(
+      context: context,
+      initialDate: _due ?? _to ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2035),
+    );
+    if (d != null) setState(() => _due = d);
   }
 
-  Future<void> _pickDuration() async {
-    const none = -1;
-    final picked = await _options<int>('Duration', {
-      none: 'None',
-      for (final m in const [15, 30, 45, 60, 90, 120, 180, 240])
-        m: formatMinutes(m),
-    }, _duration ?? none);
-    if (picked != null)
-      setState(() => _duration = picked == none ? null : picked);
+  /// Picks the date, then the time, for From or To. A new From moves To along so the slot keeps
+  /// its length (one hour when To is not set yet).
+  Future<void> _pickSlot({required bool isFrom}) async {
+    final current = isFrom ? _from : _to;
+    if (current != null) {
+      final choice = await _options<String>(isFrom ? 'From' : 'To', {
+        'change': 'Change',
+        'clear': 'Clear',
+      }, null);
+      if (!mounted || choice == null) return;
+      if (choice == 'clear') {
+        return setState(() {
+          if (isFrom) {
+            _from = null;
+            _to = null; // a slot needs a start
+          } else {
+            _to = null;
+          }
+        });
+      }
+    }
+    final seed =
+        current ??
+        (isFrom
+            ? (_due ?? DateTime.now())
+            : (_from ?? DateTime.now()).add(const Duration(hours: 1)));
+    final date = await showDatePicker(
+      context: context,
+      initialDate: seed,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2035),
+    );
+    if (!mounted || date == null) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(
+        current ?? (isFrom ? DateTime.now() : seed),
+      ),
+    );
+    if (!mounted || time == null) return;
+    final picked = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time.hour,
+      time.minute,
+    );
+
+    if (!isFrom && _from != null && !picked.isAfter(_from!)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('"To" has to be after "From"'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    setState(() {
+      if (isFrom) {
+        final length = (_from != null && _to != null)
+            ? _to!.difference(_from!)
+            : const Duration(hours: 1);
+        _from = picked;
+        _to = picked.add(length);
+      } else {
+        _to = picked;
+        _from ??= picked.subtract(const Duration(hours: 1));
+      }
+    });
   }
 
   Future<void> _pickCategory(List<String> categories) async {
@@ -1172,10 +1212,8 @@ class _TaskSheetState extends ConsumerState<_TaskSheet> {
     if (title.isEmpty) return;
     _addSubtask(); // keep a typed-but-not-submitted subtask
     final existing = widget.existingTask;
-    final due = _due ?? existing?.dueDate ?? DateTime.now();
-    DateTime? at(TimeOfDay? t) => t == null
-        ? null
-        : DateTime(due.year, due.month, due.day, t.hour, t.minute);
+    // Without a due date, the task belongs to the day its time slot ends.
+    final due = _due ?? _to ?? _from ?? existing?.dueDate ?? DateTime.now();
 
     final task = Task(
       id: existing?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
@@ -1188,11 +1226,9 @@ class _TaskSheetState extends ConsumerState<_TaskSheet> {
       repeatEndDate: _repeatEnd,
       parentTaskId: existing?.parentTaskId,
       dueDate: due,
-      startTime: at(_start),
-      endTime: _start == null || _duration == null
-          ? null
-          : at(_start)!.add(Duration(minutes: _duration!)),
-      durationMinutes: _duration,
+      startTime: _from,
+      endTime: _to,
+      durationMinutes: null, // derived from From–To
       notificationMinutesBefore: _reminder,
       subtasks: _subtasks,
     );
@@ -1201,7 +1237,7 @@ class _TaskSheetState extends ConsumerState<_TaskSheet> {
     existing == null ? repo.addTask(task) : repo.updateTask(task);
     final messenger = ScaffoldMessenger.of(context);
     Navigator.pop(context);
-    if (_reminder != -1 && _start != null) {
+    if (_reminder != -1 && _from != null) {
       messenger.showSnackBar(
         SnackBar(
           content: Text(

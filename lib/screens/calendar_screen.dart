@@ -38,9 +38,10 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
   ) {
     List<dynamic> dayItems = [];
 
-    // Add tasks due or starting on this day
+    // Add tasks whose From–To slot touches this day, or that start or are due on it
     dayItems.addAll(
       tasks.where((t) {
+        if (slotCoversDay(t.startTime, t.endTime, day)) return true;
         if (t.startTime != null) {
           return DateUtils.isSameDay(t.startTime, day);
         } else if (t.dueDate != null) {
@@ -836,7 +837,7 @@ class _DayTimelineState extends State<_DayTimeline> {
           block(
             title: item.title,
             subtitle:
-                '${hm(item.startTime!)} – ${hm(item.endTime!)} · ${formatMinutes(item.effectiveDurationMinutes ?? 0)} · ${item.category}',
+                '${timeRange(item.startTime!, item.endTime)} · ${item.category}',
             bg: colors.raised,
             dot: theme.colorScheme.onSurfaceVariant,
             start: item.startTime!,
@@ -904,9 +905,9 @@ class _DayTimelineState extends State<_DayTimeline> {
                 for (final t in untimed)
                   _DeadlinePill(
                     task: t,
-                    label: t.effectiveDurationMinutes == null
+                    label: t.durationMinutes == null
                         ? t.title
-                        : '${t.title} · ${formatMinutes(t.effectiveDurationMinutes!)}',
+                        : '${t.title} · ${formatMinutes(t.durationMinutes!)}',
                     onTap: () => widget.onTap(t),
                   ),
               ],

@@ -3,7 +3,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:taskflow_suite/theme/app_theme.dart';
 
 void main() {
-  const colors = AppColors(raised: Colors.grey, ring: Colors.grey, high: Colors.red, medium: Colors.amber, low: Colors.blueGrey);
+  const colors = AppColors(
+    raised: Colors.grey,
+    ring: Colors.grey,
+    high: Colors.red,
+    medium: Colors.amber,
+    low: Colors.blueGrey,
+  );
 
   test('priority maps to its colour and falls back to low', () {
     expect(colors.priority('High'), Colors.red);

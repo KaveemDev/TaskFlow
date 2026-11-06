@@ -319,3 +319,25 @@ String formatMinutes(int minutes) {
   final h = minutes ~/ 60, m = minutes % 60;
   return m == 0 ? '${h}h' : '${h}h ${m}m';
 }
+
+/// "10:30–11:15" on one day, "Thu 5 Nov 10:30 – Sat 7 Nov 18:00" across days, "10:30" with no end.
+String timeRange(DateTime from, DateTime? to) {
+  final hm = DateFormat.Hm();
+  if (to == null) return hm.format(from);
+  if (DateUtils.isSameDay(from, to))
+    return '${hm.format(from)}–${hm.format(to)}';
+  final day = DateFormat('EEE d MMM');
+  return '${day.format(from)} ${hm.format(from)} – ${day.format(to)} ${hm.format(to)}';
+}
+
+/// Whether a From–To slot touches [day]. An end exactly at midnight does not count for that day.
+bool slotCoversDay(DateTime? from, DateTime? to, DateTime day) {
+  if (from == null || to == null) return false;
+  final start = DateTime(day.year, day.month, day.day);
+  final end = DateTime(day.year, day.month, day.day + 1);
+  return from.isBefore(end) && to.isAfter(start);
+}
+
+/// [d] moved by [days] calendar days, keeping its time of day.
+DateTime shiftDays(DateTime d, int days) =>
+    DateTime(d.year, d.month, d.day + days, d.hour, d.minute);
